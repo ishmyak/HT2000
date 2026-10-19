@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+*.egg-info/
+build/
+dist/
+data/
+*.log
+*.log.*
+config.json
+AGENTS.md
+PUBLICATION_STRATEGY.md
