@@ -25,6 +25,7 @@ from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPainterPath, 
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
+from ht2000_web import HT2000WebError, HT2000WebServer, local_ip_addresses
 
 ICON_SIZE = 64
 HISTORY = 32
@@ -89,8 +90,11 @@ class HT2000Logger(object):
         self.oFile.flush()
 
     def _ensure_file(self, oWhen):
-        sNewPath = os.path.join(self.dataDir,
-                                "ht2000_{0:04d}-{1:02d}.csv".format(oWhen.year, oWhen.month))
+        # Файл называется датой: новый день — новый файл, весь день — тот же.
+        sNewPath = os.path.join(
+            self.dataDir,
+            "ht2000_{0:04d}-{1:02d}-{2:02d}.csv".format(
+                oWhen.year, oWhen.month, oWhen.day))
         if sNewPath == self.sPath:
             return
         self.close()
@@ -288,10 +292,14 @@ class HT2000TrayMonitor(object):
         self.co2History = [0.0] * HISTORY
         self.oReader = HT2000Reader()
         self.oLogger = HT2000Logger()
+        self.oWeb = HT2000WebServer(self.snapshotForWeb, sDataDir=DATA_DIR)
 
         self.pTray = QSystemTrayIcon()
 
         menu = QMenu()
+        self.aWeb = menu.addAction("Сервер")
+        self.aWeb.setCheckable(True)
+        self.aWeb.toggled.connect(self._onWebToggled)
         actExit = menu.addAction("Выход")
         actExit.triggered.connect(QApplication.instance().quit)
         self.pTray.setContextMenu(menu)
@@ -341,9 +349,40 @@ class HT2000TrayMonitor(object):
             sTip = "CO2: {0:d} ppm\nT: {1:.1f} °C\nRH: {2:.1f} %".format(
                 oData.co2, oData.temperature, oData.humidity)
             oCo2Color = co2Color(oData.co2)
+        if self.oWeb.is_running():
+            for sIp in local_ip_addresses():
+                sTip += "\nвеб: http://{0}:{1}/".format(sIp, self.oWeb.nPort)
 
         self.pTray.setToolTip(sTip)
         self.pTray.setIcon(QIcon(self._renderIcon(self.co2History, oBg, oCo2Color)))
+
+    # -- Веб-сервер -------------------------------------------------------
+
+    def snapshotForWeb(self):
+        """Снимок последних данных для веб-страницы (или None, если данных нет)."""
+        if self.oLastData is None:
+            return None
+        return {
+            "co2": self.oLastData.co2,
+            "temperature": self.oLastData.temperature,
+            "humidity": self.oLastData.humidity,
+            "connected": self.bConnected,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+    def _onWebToggled(self, bChecked):
+        if bChecked:
+            try:
+                self.oWeb.start()
+            except HT2000WebError as oExc:
+                sys.stderr.write("Не удалось запустить веб-сервер: {0}\n".format(oExc))
+                self.aWeb.setChecked(False)
+                return
+            print("HT2000 web: " + "  ".join(
+                "http://{0}:{1}/".format(sIp, self.oWeb.nPort)
+                for sIp in local_ip_addresses()))
+        else:
+            self.oWeb.stop()
 
     def _renderIcon(self, values, oBg, oAccent):
         pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
