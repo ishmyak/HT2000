@@ -51,7 +51,7 @@ RANGE_HOURS = {"hour": 1, "day": 24, "week": 24 * 7}
 # Время проветривания: вертикальные линии на графиках (часы, минуты).
 VENTILATION_TIMES = ((11, 0), (13, 0), (14, 30), (16, 0))
 VENTILATION_LABEL = "проветривание"
-VENTILATION_INTERVAL_MIN = 30       # подсветка интервала после проветривания
+VENTILATION_INTERVAL_MIN = 15       # подсветка интервала после проветривания
 
 CO2_WARN_LO = 800
 CO2_WARN_HI = 1200
