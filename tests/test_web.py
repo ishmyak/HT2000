@@ -431,6 +431,56 @@ class TestServer(unittest.TestCase):
         finally:
             self.oServer.stop()
 
+    def test_events_endpoint(self):
+        # SSE: text/event-stream; первое событие snapshot с JSON-снимком,
+        # затем graphs с фрагментом графиков (данные из CSV).
+        with tempfile.TemporaryDirectory() as sDir:
+            oNow = datetime.now()
+            sBody = ""
+            for nIndex in range(10):
+                oDt = oNow - timedelta(minutes=10 - nIndex)
+                sBody += "{0};{1};{2};{3}\n".format(
+                    oDt.strftime("%Y-%m-%d %H:%M:%S"), 800 + nIndex, 26.0, 40.0)
+            write_csv(sDir, sBody)
+            self.oServer = start_server(sDataDir=sDir)
+            try:
+                with urllib.request.urlopen(
+                        "http://127.0.0.1:{0}/events?range=hour".format(
+                            self.oServer.nPort), timeout=10) as oResp:
+                    self.assertEqual(oResp.status, 200)
+                    self.assertIn("text/event-stream",
+                                  oResp.headers.get("Content-Type", ""))
+                    # Собираем event.data по правилам EventSource: браузер
+                    # учитывает только строки с префиксом data:.
+                    sEvent = ""
+                    aData = []
+                    bSnapshot = False
+                    for oLine in oResp:
+                        sLine = oLine.decode("utf-8").rstrip("\r\n")
+                        if sLine.startswith("event: "):
+                            sEvent = sLine[7:]
+                        elif sLine.startswith("data: "):
+                            aData.append(sLine[6:])
+                        elif not sLine:
+                            sData = "\n".join(aData)
+                            if sEvent == "snapshot":
+                                self.assertEqual(json.loads(sData)["co2"], 737)
+                                bSnapshot = True
+                            elif sEvent == "graphs" and sData:
+                                self.assertTrue(bSnapshot)
+                                with self.oServer._condition:
+                                    sExpected = self.oServer._cache["graphs"]["hour"][1]
+                                self.assertEqual(sData, sExpected)
+                                self.assertEqual(sData.count("<svg"), 3)
+                                self.assertEqual(sData.count("<polyline"), 3)
+                                break
+                            sEvent = ""
+                            aData = []
+                    else:
+                        self.fail("SSE-поток завершился без графиков")
+            finally:
+                self.oServer.stop()
+
     def test_unknown_path_404(self):
         self.oServer = start_server()
         with self.assertRaises(urllib.error.HTTPError) as oCtx:

@@ -31,6 +31,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -41,6 +42,9 @@ START_PORT = 8080
 MAX_PORT_ATTEMPTS = 10
 REFRESH_SECONDS = 5
 REFRESH_MS = REFRESH_SECONDS * 1000
+# SSE-пуш: снимок — каждую секунду, графики — каждые 5 секунд.
+SSE_SNAPSHOT_SECONDS = 1.0
+SSE_GRAPHS_SECONDS = 5.0
 
 # Слушаем все интерфейсы, чтобы страница была доступна по локальной сети.
 BIND_ADDRESS = "0.0.0.0"
@@ -302,7 +306,8 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
     graphs.addEventListener('mouseleave', clearCross);
   }}
 
-  /* Обновление без перезагрузки: /data (таблица) + /graphs (графики) */
+  /* Обновление по SSE: сервер сам пушит события snapshot (1 с) и
+     graphs (5 с) — клиент не делает периодических запросов. */
   function parseAge(sTime){{
     if (!sTime) return null;
     var t = Date.parse(sTime);
@@ -314,57 +319,83 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
     return Math.round(ms / 60000) + ' мин назад';
   }}
 
-  function refresh(){{
-    fetch('/data').then(function(r){{ return r.json(); }}).then(function(d){{
-      var cell = document.getElementById('ht-co2');
-      if (d.co2 !== undefined && d.co2 !== null) {{
-        cell.textContent = d.co2 + ' ppm';
-        cell.className = co2Color(d.co2) === '{red}' ? 'co2_r' :
-                         co2Color(d.co2) === '{yellow}' ? 'co2_y' : 'co2_g';
-      }}
-      var t = document.getElementById('ht-temp');
-      if (d.temperature !== undefined && d.temperature !== null){{
-        t.textContent = d.temperature.toFixed(1) + ' °C ';
-        if (d.temp_status) t.appendChild(comfortSpan(d.temp_status, d.temp_range_txt, d.temp_acc_range_txt));
-      }}
-      var h = document.getElementById('ht-hum');
-      if (d.humidity !== undefined && d.humidity !== null){{
-        h.textContent = d.humidity.toFixed(1) + ' % ';
-        if (d.rh_status) h.appendChild(comfortSpan(d.rh_status, d.rh_range_txt, d.rh_acc_range_txt));
-      }}
-      /* Строки норм под значениями карточек */
-      var tn = document.getElementById('ht-temp-range');
-      if (d.temp_range_txt){{
-        tn.textContent = 'норма ' + d.temp_range_txt +
-          (d.temp_range_txt !== d.temp_acc_range_txt ? ' · доп ' + d.temp_acc_range_txt : '');
-      }}
-      var hn = document.getElementById('ht-hum-range');
-      if (d.rh_range_txt){{
-        hn.textContent = 'норма ' + d.rh_range_txt +
-          (d.rh_range_txt !== d.rh_acc_range_txt ? ' · доп ' + d.rh_acc_range_txt : '');
-      }}
-      var st = document.getElementById('ht-status');
-      var age = parseAge(d.time);
-      if (d.connected && age !== null && age < 180000) {{
-        st.textContent = 'обновлено: ' + d.time.substring(0, 19).replace('T', ' ') + ' (' + fmtAge(age) + ')';
-        st.className = 'status';
-      }} else if (age !== null) {{
-        st.textContent = 'связь потеряна · данные ' + fmtAge(age);
-        st.className = 'status warn';
-      }} else {{
-        st.textContent = 'нет связи с устройством';
-        st.className = 'status warn';
-      }}
-      if (d.co2) setFavicon(d.co2);
-    }}).catch(function(){{}});
-    fetch('/graphs?range=' + range).then(function(r){{ return r.json(); }}).then(function(d){{
-      if (d.html) {{ graphs.innerHTML = d.html; initGraphs(); }}
-    }}).catch(function(){{}});
+  function applyData(d){{
+    var cell = document.getElementById('ht-co2');
+    if (d.co2 !== undefined && d.co2 !== null) {{
+      cell.textContent = d.co2 + ' ppm';
+      cell.className = co2Color(d.co2) === '{red}' ? 'co2_r' :
+                       co2Color(d.co2) === '{yellow}' ? 'co2_y' : 'co2_g';
+    }}
+    var t = document.getElementById('ht-temp');
+    if (d.temperature !== undefined && d.temperature !== null){{
+      t.textContent = d.temperature.toFixed(1) + ' °C ';
+      if (d.temp_status) t.appendChild(comfortSpan(d.temp_status, d.temp_range_txt, d.temp_acc_range_txt));
+    }}
+    var h = document.getElementById('ht-hum');
+    if (d.humidity !== undefined && d.humidity !== null){{
+      h.textContent = d.humidity.toFixed(1) + ' % ';
+      if (d.rh_status) h.appendChild(comfortSpan(d.rh_status, d.rh_range_txt, d.rh_acc_range_txt));
+    }}
+    /* Строки норм под значениями карточек */
+    var tn = document.getElementById('ht-temp-range');
+    if (d.temp_range_txt){{
+      tn.textContent = 'норма ' + d.temp_range_txt +
+        (d.temp_range_txt !== d.temp_acc_range_txt ? ' · доп ' + d.temp_acc_range_txt : '');
+    }}
+    var hn = document.getElementById('ht-hum-range');
+    if (d.rh_range_txt){{
+      hn.textContent = 'норма ' + d.rh_range_txt +
+        (d.rh_range_txt !== d.rh_acc_range_txt ? ' · доп ' + d.rh_acc_range_txt : '');
+    }}
+    var st = document.getElementById('ht-status');
+    var age = parseAge(d.time);
+    if (d.connected && age !== null && age < 180000) {{
+      st.textContent = 'обновлено: ' + d.time.substring(0, 19).replace('T', ' ') + ' (' + fmtAge(age) + ')';
+      st.className = 'status';
+    }} else if (age !== null) {{
+      st.textContent = 'связь потеряна · данные ' + fmtAge(age);
+      st.className = 'status warn';
+    }} else {{
+      st.textContent = 'нет связи с устройством';
+      st.className = 'status warn';
+    }}
+    if (d.co2) setFavicon(d.co2);
+  }}
+
+  function applyGraphs(sHtml){{
+    if (!sHtml) return;
+    graphs.innerHTML = sHtml;
+    initGraphs();
+  }}
+
+  function applySnapshot(d){{
+    if (d.html) {{ graphs.innerHTML = d.html; initGraphs(); }}
+  }}
+
+  function startEvents(){{
+    var es = new EventSource('/events?range=' + range);
+    es.addEventListener('snapshot', function(e){{
+      applyData(JSON.parse(e.data));
+    }});
+    es.addEventListener('graphs', function(e){{
+      applyGraphs(e.data);
+    }});
+  }}
+
+  /* Страховка для окружений без SSE: старый опрос по таймеру. */
+  function fallbackPoll(){{
+    fetch('/data').then(function(r){{ return r.json(); }}).then(applyData).catch(function(){{}});
+    fetch('/graphs?range=' + range).then(function(r){{ return r.json(); }}).then(applySnapshot).catch(function(){{}});
   }}
 
   initGraphs();
-  setInterval(refresh, REFRESH_MS);
-  refresh();
+  if (typeof EventSource === 'undefined') {{
+    /* Нет SSE — старый опрос по таймеру. */
+    setInterval(fallbackPoll, REFRESH_MS);
+    fallbackPoll();
+  }} else {{
+    startEvents();
+  }}
 }})(window);
 </script>
 </body>
@@ -607,14 +638,23 @@ def _empty_graphs():
 def graphs_fragment(sDataDir, sRange, oNow=None):
     """HTML-фрагмент секции графиков (легенда + три графика).
 
+    Читает CSV и рендерит; для готовых строк есть graphs_from_rows().
     Возвращает строку для вставки в страницу или в JSON /graphs."""
+    aRows = []
+    if sDataDir:
+        aRows = read_recent(sDataDir, RANGE_HOURS[sRange])
+    return graphs_from_rows(aRows, sRange, oNow)
+
+
+def graphs_from_rows(aRows, sRange, oNow=None):
+    """Легенда + три графика по готовым строкам (одно чтение CSV на цикл).
+
+    aRows — строки read_recent (уже отфильтрованные по окну); sRange —
+    'hour' | 'day' | 'week'. Используется SSE-потоком для кэша графиков."""
     if sRange not in RANGES:
         sRange = "hour"
     if oNow is None:
         oNow = datetime.now()
-    aRows = []
-    if sDataDir:
-        aRows = read_recent(sDataDir, RANGE_HOURS[sRange])
     aVerticals = ventilation_lines(oNow)
     sLegend = ""
     if aRows:
@@ -862,6 +902,52 @@ class HT2000WebServer(object):
         self.nPort = None
         self.httpd = None
         self.oThread = None
+        # SSE-кэш: последний снимок и фрагменты графиков по диапазонам.
+        # Каждое значение — (версия, данные); версия меняется при обновлении.
+        self._condition = threading.Condition()
+        self._cache = {
+            "snapshot": (0, None),
+            "graphs": {sRange: (0, "") for sRange in RANGES},
+        }
+        self._pushThread = None
+        self._pushStop = threading.Event()
+
+    # -- Поток-генератор SSE ----------------------------------------------
+
+    def _push_loop(self):
+        """Фоновый поток: готовит снимок (1 с) и графики (5 с), будит /events.
+
+        Графики рендерятся один раз на цикл (одно чтение CSV-файлов за
+        неделю), затем нарезаются по окнам hour/day/week."""
+        dNextSnapshot = time.monotonic()
+        dNextGraphs = time.monotonic()
+        while not self._pushStop.is_set():
+            oTick = time.monotonic()
+            try:
+                if oTick >= dNextSnapshot:
+                    dNextSnapshot = oTick + SSE_SNAPSHOT_SECONDS
+                    oSnap = self.fnSnapshot()
+                    if oSnap is not None:
+                        oSnap = snapshot_with_comfort(oSnap)
+                    with self._condition:
+                        nVer = self._cache["snapshot"][0] + 1
+                        self._cache["snapshot"] = (nVer, oSnap)
+                        self._condition.notify_all()
+                if oTick >= dNextGraphs and self.sDataDir:
+                    dNextGraphs = oTick + SSE_GRAPHS_SECONDS
+                    oNow = datetime.now()
+                    aRows = read_recent(self.sDataDir, RANGE_HOURS["week"])
+                    with self._condition:
+                        for sRange in RANGES:
+                            oCutoff = oNow - timedelta(hours=RANGE_HOURS[sRange])
+                            aWin = [oRow for oRow in aRows if oRow[0] >= oCutoff]
+                            sHtml = graphs_from_rows(aWin, sRange, oNow)
+                            oPrev = self._cache["graphs"][sRange]
+                            self._cache["graphs"][sRange] = (oPrev[0] + 1, sHtml)
+                        self._condition.notify_all()
+            except Exception as oExc:   # поток не должен умирать
+                sys.stderr.write("[ht2000-web] push: {0}\n".format(oExc))
+            self._pushStop.wait(SSE_SNAPSHOT_SECONDS)
 
     # -- Жизненный цикл -----------------------------------------------------
 
@@ -876,7 +962,7 @@ class HT2000WebServer(object):
             nPort = self.nStartPort + nAttempt
             try:
                 self.httpd = _HT2000Server((BIND_ADDRESS, nPort), _HT2000Handler,
-                                           self.fnSnapshot, self.sDataDir)
+                                           self.fnSnapshot, self.sDataDir, self)
             except OSError:
                 continue    # порт занят — пробуем следующий
             self.nPort = nPort
@@ -885,6 +971,11 @@ class HT2000WebServer(object):
             raise HT2000WebError(
                 "не удалось занять порты {0}..{1}".format(
                     self.nStartPort, self.nStartPort + self.nMaxAttempts - 1))
+        self._pushStop.clear()
+        self._pushThread = threading.Thread(target=self._push_loop,
+                                            name="ht2000-web-push")
+        self._pushThread.daemon = True
+        self._pushThread.start()
         self.oThread = threading.Thread(target=self.httpd.serve_forever, name="ht2000-web")
         self.oThread.daemon = True
         self.oThread.start()
@@ -894,6 +985,12 @@ class HT2000WebServer(object):
         """Останавливает сервер. Идемпотентна: повторный вызов безопасен."""
         if self.httpd is None:
             return
+        self._pushStop.set()
+        with self._condition:
+            self._condition.notify_all()
+        if self._pushThread is not None:
+            self._pushThread.join(timeout=2.0)
+            self._pushThread = None
         self.httpd.shutdown()
         self.httpd.server_close()
         self.httpd = None
@@ -905,12 +1002,13 @@ class HT2000WebServer(object):
 
 
 class _HT2000Server(ThreadingHTTPServer):
-    """ThreadingHTTPServer, несущий колбек снимка и каталог данных."""
+    """ThreadingHTTPServer, несущий колбек снимка, каталог данных и кэш SSE."""
     daemon_threads = True
 
-    def __init__(self, oAddress, oHandlerClass, fnSnapshot, sDataDir):
+    def __init__(self, oAddress, oHandlerClass, fnSnapshot, sDataDir, oOwner):
         self.fnSnapshot = fnSnapshot
         self.sDataDir = sDataDir
+        self.oOwner = oOwner      # HT2000WebServer: _cache и _condition
         ThreadingHTTPServer.__init__(self, oAddress, oHandlerClass)
 
 
@@ -925,6 +1023,8 @@ class _HT2000Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8",
                        format_page(oSnapshot, sRange=sRange,
                                    sDataDir=self.server.sDataDir))
+        elif oUrl.path == "/events":
+            self._stream_events(self._range(oUrl))
         elif oUrl.path == "/graphs":
             sRange = self._range(oUrl)
             sHtml = graphs_fragment(self.server.sDataDir, sRange)
@@ -941,6 +1041,53 @@ class _HT2000Handler(BaseHTTPRequestHandler):
         if aRanges and aRanges[0] in RANGES:
             return aRanges[0]
         return "hour"
+
+    def _stream_events(self, sRange):
+        """SSE-поток: события snapshot (1 с) и graphs (5 с) из кэша сервера.
+
+        При подключении сразу отдаёт текущее состояние (важно для
+        авто-переподключения EventSource). Пишет chunked, чтобы не
+        закрывать соединение между событиями. Обрыв клиента — исключение
+        при записи — поток хендлера завершается."""
+        # HTTP/1.0 закрывает соединение после do_GET — для потока нужен 1.1.
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        oOwner = self.server.oOwner
+        oCache = oOwner._cache
+        oCondition = oOwner._condition
+
+        def oChunk(oBody):
+            self.wfile.write(("{0:x}\r\n".format(len(oBody))).encode("ascii"))
+            self.wfile.write(oBody)
+            self.wfile.write(b"\r\n")
+            self.wfile.flush()
+
+        def oEvent(sName, sData):
+            # В SSE каждая строка HTML должна иметь свой префикс data:.
+            sPayload = "data: " + sData.replace("\n", "\ndata: ")
+            oChunk(("event: {0}\n{1}\n\n".format(
+                sName, sPayload)).encode("utf-8"))
+
+        nLastSnapshot = -1
+        nLastGraphs = -1
+        try:
+            while True:
+                oGraphsVer, sGraphs = oCache["graphs"][sRange]
+                oSnapVer, oSnap = oCache["snapshot"]
+                if oSnapVer != nLastSnapshot:
+                    nLastSnapshot = oSnapVer
+                    oEvent("snapshot", format_json(oSnap).decode("utf-8"))
+                if oGraphsVer != nLastGraphs:
+                    nLastGraphs = oGraphsVer
+                    oEvent("graphs", sGraphs)
+                with oCondition:
+                    oCondition.wait(SSE_SNAPSHOT_SECONDS)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass    # клиент закрыл соединение
 
     def log_message(self, sFormat, *aArgs):
         sys.stderr.write("[ht2000-web] {0} {1}\n".format(
