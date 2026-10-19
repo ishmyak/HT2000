@@ -84,68 +84,105 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HT2000</title>
 <link id="ht-favicon" rel="icon" href="{favicon}">
 <style>
- :root{{--bg:#f5f5f5;--card:#fff;--text:#555;--muted:#999;--status:#aaa;--link:#1565c0;
-       --shadow:rgba(0,0,0,.15);--sw:#b0bec5;--h2:#666;--line:#b0bec5}}
- body.dark{{--bg:#171a1f;--card:#242a33;--text:#aeb7c3;--muted:#6d7683;--status:#5f6672;
-       --link:#7fb3ff;--shadow:rgba(0,0,0,.5);--sw:#45515e;--h2:#8b95a3;--line:#45515e}}
- body{{font-family:Verdana,sans-serif;background:var(--bg);margin:0;padding:24px;text-align:center;
-       color:var(--text)}}
- h1{{font-size:15px;color:var(--text);margin:0 0 14px;font-weight:normal}}
- table{{margin:0 auto;border-collapse:collapse;background:var(--card);box-shadow:0 1px 6px var(--shadow)}}
- td,th{{padding:7px 18px;font-size:15px}}
- th{{color:var(--muted);font-weight:normal;text-align:right}}
- td{{min-width:120px}}
-.co2_g{{color:{green};font-weight:bold}}
-  .co2_y{{color:{yellow};font-weight:bold}}
-  .co2_r{{color:{red};font-weight:bold}}
-  .st_ok{{color:{green};font-weight:bold}}
-  .st_warn{{color:{yellow};font-weight:bold}}
-  .st_bad{{color:{red};font-weight:bold}}
- .status{{color:var(--status);margin-top:12px;font-size:12px}}
+ :root{{--bg:#eef1f5;--card:#fff;--text:#222a37;--muted:#8a93a3;--status:#9aa3b2;
+       --link:#1565c0;--shadow:rgba(25,35,60,.10);--sw:#b0bec5;--h2:#3d4857;
+       --line:#dde3ea;--warn-bg:rgba(255,214,0,.14);--ok-bg:rgba(0,200,83,.12);
+       --bad-bg:rgba(255,45,0,.12)}}
+ body.dark{{--bg:#101318;--card:#1d222b;--text:#cfd6e2;--muted:#6f7886;--status:#5f6672;
+       --link:#7fb3ff;--shadow:rgba(0,0,0,.45);--sw:#45515e;--h2:#9aa5b3;
+       --line:#333c48;--warn-bg:rgba(255,214,0,.12);--ok-bg:rgba(0,200,83,.10);
+       --bad-bg:rgba(255,45,0,.14)}}
+ body{{font-family:"Segoe UI",system-ui,Verdana,sans-serif;background:var(--bg);
+       margin:0;padding:26px 18px;color:var(--text)}}
+ .wrap{{max-width:1180px;margin:0 auto}}
+ .hdr{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}}
+ .hdr h1{{font-size:19px;font-weight:650;margin:0;letter-spacing:.01em}}
+ .status{{font-size:12px;color:var(--status)}}
  .status.warn{{color:{red};font-weight:bold}}
- .range{{margin:18px auto 6px;font-size:14px}}
- .range a{{color:var(--link);text-decoration:none;padding:2px 10px;border-radius:10px}}
- .range a.active{{background:var(--link);color:#fff;font-weight:bold}}
- .sep{{color:var(--muted);padding:0 4px}}
- .themebtn{{position:fixed;top:10px;right:10px;border:0;background:var(--card);
-       color:var(--text);font-size:15px;cursor:pointer;border-radius:12px;
-       box-shadow:0 1px 4px var(--shadow);padding:4px 8px}}
- .graph{{background:var(--card);border-radius:6px;box-shadow:0 1px 6px var(--shadow);
-       margin:12px auto;padding:10px 12px 6px;max-width:{svgw}px;text-align:left}}
- .graph h2{{font-size:13px;color:var(--h2);margin:0 0 4px;font-weight:normal}}
+ .cards{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}}
+ .card{{background:var(--card);border-radius:16px;padding:16px 18px;
+       box-shadow:0 2px 12px var(--shadow)}}
+ .card .label{{font-size:11px;color:var(--muted);text-transform:uppercase;
+       letter-spacing:.09em}}
+ .card .value{{font-size:36px;font-weight:700;line-height:1.25;margin:4px 0 2px}}
+ .card .note{{font-size:11px;color:var(--muted)}}
+ .co2_g{{color:{green}}}
+ .co2_y{{color:var(--yellow-c,#cf9f00)}}
+ .co2_r{{color:{red}}}
+ body.dark .co2_y{{color:{yellow};color:var(--yellow-c,#ffd600)}}
+ .st_ok{{color:{green};font-weight:bold}}
+ .st_warn{{color:var(--yellow-c,#cf9f00);font-weight:bold}}
+ body.dark .st_warn{{color:{yellow}}}
+ .st_bad{{color:{red};font-weight:bold}}
+ .range{{display:inline-flex;background:var(--card);border:1px solid var(--line);
+        border-radius:999px;padding:3px;margin-bottom:16px;
+        box-shadow:0 1px 5px var(--shadow)}}
+ .range a{{color:var(--link);text-decoration:none;padding:6px 20px;
+        border-radius:999px;font-size:13px}}
+ .range a.active{{background:var(--link);color:#fff;font-weight:650}}
+ .graphs{{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}}
+ .graph{{background:var(--card);border-radius:16px;padding:14px 16px 10px;
+       box-shadow:0 2px 12px var(--shadow);text-align:left}}
+ .g-co2{{grid-column:1 / -1}}
+ .graph h2{{font-size:13px;color:var(--h2);margin:0 0 6px;font-weight:650}}
  .graph svg{{width:100%;height:auto;display:block}}
- .graph text{{font-family:Verdana,sans-serif;font-size:10px;fill:var(--muted)}}
+ .graph text{{font-family:inherit;font-size:10px;fill:var(--muted)}}
  .graph .empty{{color:var(--muted);font-size:13px;padding:30px 0;text-align:center}}
- .stats{{font-size:11px;color:var(--muted);margin-top:1px}}
- .legend{{font-size:12px;color:var(--muted);max-width:{svgw}px;margin:0 auto;text-align:left;padding:0 12px}}
- .legend .sw{{display:inline-block;width:26px;border-top:2px dashed var(--sw);margin-right:8px;vertical-align:middle}}
- #ht-tip{{position:fixed;background:rgba(40,45,50,.92);color:#fff;font:11px Verdana,sans-serif;
-       padding:4px 8px;border-radius:4px;pointer-events:none;display:none;z-index:10;white-space:nowrap}}
+ .stats{{font-size:11px;color:var(--muted);margin-top:4px}}
+ .legend{{grid-column:1 / -1;font-size:12px;color:var(--muted);text-align:left;padding:0 4px}}
+ .legend .sw{{display:inline-block;width:26px;border-top:2px dashed var(--sw);
+       margin-right:8px;vertical-align:middle}}
+ .themebtn{{position:fixed;top:14px;right:14px;border:1px solid var(--line);
+       background:var(--card);color:var(--text);font-size:15px;cursor:pointer;
+       border-radius:999px;box-shadow:0 1px 6px var(--shadow);padding:7px 11px}}
+ #ht-tip{{position:fixed;background:rgba(20,25,32,.94);color:#fff;
+       font:11px "Segoe UI",Verdana,sans-serif;padding:4px 9px;border-radius:6px;
+       pointer-events:none;display:none;z-index:10;white-space:nowrap}}
  .ht-lv,.ht-lh{{stroke:var(--line);stroke-width:1;stroke-dasharray:4,3}}
- .ht-lv{{stroke-dasharray:4,3}}
  .ht-c{{fill:#fff;stroke:#333;stroke-width:1.5}}
+ @media (max-width:760px){{
+   .cards{{grid-template-columns:1fr}}
+   .graphs{{grid-template-columns:1fr}}
+ }}
 </style>
 </head>
 <body>
 <button id="ht-theme" class="themebtn" title="тема">🌙</button>
-<h1>HT2000 · качество воздуха</h1>
-<table>
-<tr><th>CO₂</th><td class="{co2class}" id="ht-co2">{co2}</td></tr>
-<tr><th>Температура</th><td id="ht-temp">{temp}</td></tr>
-<tr><th>Влажность</th><td id="ht-hum">{hum}</td></tr>
-</table>
-<div class="status" id="ht-status">{status}</div>
-<div class="range">
- <a href="/?range=hour" class="{cls_hour}">час</a><span class="sep">·</span>
- <a href="/?range=day" class="{cls_day}">сутки</a><span class="sep">·</span>
- <a href="/?range=week" class="{cls_week}">неделя</a>
-</div>
-<div class="graphs" id="ht-graphs">
-{legend}
-{graphs}
+<div class="wrap">
+ <div class="hdr">
+  <h1>HT2000 · качество воздуха</h1>
+  <div class="status" id="ht-status">{status}</div>
+ </div>
+ <div class="cards">
+  <div class="card">
+   <div class="label">CO₂</div>
+   <div class="value"><span id="ht-co2" class="{co2class}">{co2}</span></div>
+   <div class="note">проветривайте, если более 800 ppm</div>
+  </div>
+  <div class="card">
+   <div class="label">Температура</div>
+   <div class="value" id="ht-temp">{temp}</div>
+   <div class="note" id="ht-temp-range">{temp_range}</div>
+  </div>
+  <div class="card">
+   <div class="label">Влажность</div>
+   <div class="value" id="ht-hum">{hum}</div>
+   <div class="note" id="ht-hum-range">{hum_range}</div>
+  </div>
+ </div>
+ <div class="range">
+  <a href="/?range=hour" class="{cls_hour}">час</a>
+  <a href="/?range=day" class="{cls_day}">сутки</a>
+  <a href="/?range=week" class="{cls_week}">неделя</a>
+ </div>
+ <div class="graphs" id="ht-graphs">
+ {legend}
+ {graphs}
+ </div>
 </div>
 <div id="ht-tip"></div>
 <script>
@@ -295,6 +332,17 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
         h.textContent = d.humidity.toFixed(1) + ' % ';
         if (d.rh_status) h.appendChild(comfortSpan(d.rh_status, d.rh_range_txt, d.rh_acc_range_txt));
       }}
+      /* Строки норм под значениями карточек */
+      var tn = document.getElementById('ht-temp-range');
+      if (d.temp_range_txt){{
+        tn.textContent = 'норма ' + d.temp_range_txt +
+          (d.temp_range_txt !== d.temp_acc_range_txt ? ' · доп ' + d.temp_acc_range_txt : '');
+      }}
+      var hn = document.getElementById('ht-hum-range');
+      if (d.rh_range_txt){{
+        hn.textContent = 'норма ' + d.rh_range_txt +
+          (d.rh_range_txt !== d.rh_acc_range_txt ? ' · доп ' + d.rh_acc_range_txt : '');
+      }}
       var st = document.getElementById('ht-status');
       var age = parseAge(d.time);
       if (d.connected && age !== null && age < 180000) {{
@@ -323,7 +371,7 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
 </html>
 """
 
-GRAPH_TEMPLATE = u"""<div class="graph">
+GRAPH_TEMPLATE = u"""<div class="graph{cls}">
 <h2>{title}</h2>
 {body}
 <div class="stats">{stats}</div>
@@ -376,7 +424,7 @@ def _format_time(oDt, sRange):
 
 def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
                  aVerticals=None, oNow=None, oNowLabel=None,
-                 aBand=None, aBandAcc=None):
+                 aBand=None, aBandAcc=None, sCls=""):
     """SVG-график одной величины из строк read_recent.
 
     aRows — список (datetime, co2, temp, rh); nValueIndex — индекс величины;
@@ -384,10 +432,12 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
     пунктирные линии + подсветка интервала после каждой;
     oNow — момент "сейчас": вертикальная линия, если попал в окно графика;
     aBand — оптимальная зона нормы (нижняя, верхняя) в единицах величины;
-    aBandAcc — допустимая зона нормы (бледная полоса позади оптимальной).
+    aBandAcc — допустимая зона нормы (бледная полоса позади оптимальной);
+    sCls — дополнительный CSS-класс карточки графика (g-co2/g-temp/g-rh).
     Зоны — по comfort.py."""
     if len(aRows) < 2:
         return GRAPH_TEMPLATE.format(
+            cls=" " + sCls if sCls else "",
             title=sTitle, body='<div class="empty">нет данных за период</div>',
             stats="")
     aVals = [oRow[nValueIndex] for oRow in aRows]
@@ -514,34 +564,41 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
                 aBand[0], aBand[1], aBandAcc[0], aBandAcc[1])
         else:
             sStats += " · норма {0:.0f}–{1:.0f}".format(aBand[0], aBand[1])
-    return GRAPH_TEMPLATE.format(title=sTitle, body=sSvg, stats=sStats)
+    return GRAPH_TEMPLATE.format(cls=" " + sCls if sCls else "",
+                                 title=sTitle, body=sSvg, stats=sStats)
 
 
 def render_graphs(aRows, sRange, aVerticals=None, oNow=None):
     """Три SVG-графика (CO2, температура, влажность) для страницы.
 
-    На графике температуры — зоны нормы (оптимальная и допустимая), на
-    графике влажности — одна зона (см. comfort.py; сезон по oNow)."""
+    Карточки получают классы g-co2 (на всю ширину), g-temp и g-rh
+    (рядом, по половине). На графике температуры — зоны нормы
+    (оптимальная и допустимая), на графике влажности — одна зона
+    (см. comfort.py; сезон по oNow)."""
     if oNow is None:
         oNow = datetime.now()
     sCo2 = render_graph("CO₂, ppm", aRows, 1, GRAPH_CO2_COLOR, ".0f", sRange,
-                        aVerticals, oNow)
+                        aVerticals, oNow, sCls="g-co2")
     oTOpt, oTAcc = temperature_ranges(oNow)
     sTemp = render_graph("Температура, °C", aRows, 2, GRAPH_TEMP_COLOR, ".1f",
                          sRange, aVerticals, oNow,
-                         aBand=oTOpt, aBandAcc=oTAcc)
+                         aBand=oTOpt, aBandAcc=oTAcc, sCls="g-temp")
     oHOpt, oHAcc = humidity_ranges(oNow)
     sRh = render_graph("Влажность, %", aRows, 3, GRAPH_RH_COLOR, ".1f",
                        sRange, aVerticals, oNow,
                        aBand=oHOpt if oHOpt == oHAcc else oHAcc,
-                       aBandAcc=None if oHOpt == oHAcc else oHOpt)
+                       aBandAcc=None if oHOpt == oHAcc else oHOpt,
+                       sCls="g-rh")
     return sCo2 + sTemp + sRh
 
 
 def _empty_graphs():
     aEmpty = ""
-    for sTitle in ("CO₂, ppm", "Температура, °C", "Влажность, %"):
+    for sTitle, sCls in (("CO₂, ppm", "g-co2"),
+                         ("Температура, °C", "g-temp"),
+                         ("Влажность, %", "g-rh")):
         aEmpty += GRAPH_TEMPLATE.format(
+            cls=" " + sCls,
             title=sTitle, body='<div class="empty">нет данных за период</div>',
             stats="")
     return aEmpty
@@ -657,6 +714,8 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         sClass = "co2_g"
         sTemp = "—"
         sHum = "—"
+        sTempRng = ""
+        sHumRng = ""
         sStatus = "нет связи с устройством"
     else:
         nCo2 = oSnapshot["co2"]
@@ -676,6 +735,9 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
             oStatus["humidity"],
             comfort_range_txt(oHOpt, "%"),
             comfort_range_txt(oHAcc, "%"))
+        # Строки норм в карточках (JS обновляет их по /data каждый цикл).
+        sTempRng = _norm_note(oTOpt, oTAcc, "°C")
+        sHumRng = _norm_note(oHOpt, oHAcc, "%")
         sStatus = "обновлено: {0}".format(oSnapshot.get("time", ""))
 
     sFragment = graphs_fragment(sDataDir, sRange, oWhen)
@@ -689,6 +751,8 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         co2=sCo2,
         temp=sTemp,
         hum=sHum,
+        temp_range=sTempRng,
+        hum_range=sHumRng,
         status=sStatus,
         cls_hour="active" if sRange == "hour" else "",
         cls_day="active" if sRange == "day" else "",
@@ -702,6 +766,14 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         sy1=SVG_HEIGHT - SVG_BOTTOM,
         refresh_ms=REFRESH_MS,
     ).encode("utf-8")
+
+
+def _norm_note(oOpt, oAcc, sUnit):
+    """Строка норм для карточки: 'норма 22–24 °C · доп 20–25 °C'."""
+    sNote = "норма {0}".format(comfort_range_txt(oOpt, sUnit))
+    if oAcc != oOpt:
+        sNote += " · доп {0}".format(comfort_range_txt(oAcc, sUnit))
+    return sNote
 
 
 def format_json(oSnapshot):
