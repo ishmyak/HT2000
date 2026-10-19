@@ -20,8 +20,9 @@ import os
 import sys
 from datetime import datetime
 
-from PyQt5.QtCore import QRectF, QTimer, Qt
-from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt5.QtCore import QRectF, QTimer, Qt, QUrl
+from PyQt5.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, QIcon,
+                         QPainter, QPainterPath, QPen, QPixmap)
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
@@ -57,6 +58,10 @@ CLOCK_BG_TOLERANCE = 40
 PANEL_STRIP_H = 30
 PANEL_STRIP_STEP = 8
 CO2_MAX_SCALE = 3000    # шкала графика CO2, ppm
+VALUE_AREA_H = 14       # нижняя полоса иконки под число CO2
+
+# Порог первого уведомления CO2 (проветрите помещение).
+NOTIFY_CO2 = 800
 
 
 class HT2000Logger(object):
@@ -289,6 +294,10 @@ class HT2000TrayMonitor(object):
     def __init__(self):
         self.bConnected = False
         self.oLastData = None
+        self.oLastTime = None       # момент последнего успешного чтения
+        self.nWarnLevel = 0         # 0 — норма, 1 — жёлтый, 2 — красный
+        self._bFlash = False        # фаза мигания «!» при потере связи
+        self.bLogPaused = False     # «Пауза записи» в меню
         self.co2History = [0.0] * HISTORY
         self.oReader = HT2000Reader()
         self.oLogger = HT2000Logger()
@@ -297,12 +306,21 @@ class HT2000TrayMonitor(object):
         self.pTray = QSystemTrayIcon()
 
         menu = QMenu()
-        self.aWeb = menu.addAction("Сервер")
+        self.aOpenWeb = menu.addAction("Открыть веб-страницу")
+        self.aOpenWeb.triggered.connect(self._openWeb)
+        self.aWeb = menu.addAction("Сервер: выкл")
         self.aWeb.setCheckable(True)
         self.aWeb.toggled.connect(self._onWebToggled)
+        self.aPause = menu.addAction("Пауза записи")
+        self.aPause.setCheckable(True)
+        self.aPause.toggled.connect(self._onPauseToggled)
+        self.aOpenData = menu.addAction("Открыть папку данных")
+        self.aOpenData.triggered.connect(self._openDataDir)
+        menu.addSeparator()
         actExit = menu.addAction("Выход")
         actExit.triggered.connect(QApplication.instance().quit)
         self.pTray.setContextMenu(menu)
+        self.pTray.activated.connect(self._onActivated)
 
         self.tick()
         self.pTray.show()
@@ -327,6 +345,7 @@ class HT2000TrayMonitor(object):
         self.bConnected = oData is not None
         if oData is not None:
             self.oLastData = oData
+            self.oLastTime = datetime.now()
         if self.oLastData is not None:
             oData = self.oLastData
 
@@ -336,25 +355,39 @@ class HT2000TrayMonitor(object):
         else:
             self.co2History.append(float(oData.co2))
             del self.co2History[:-HISTORY]
-            self.oLogger.log(oData)
+            if not self.bLogPaused:
+                self.oLogger.log(oData)
+
+        # Фаза мигания индикатора «!» при потере связи.
+        self._bFlash = not self._bFlash if self.bConnected is False else False
 
         # Цвета берутся с панели часов (как trayinfo).
         oBg, oAccent = detectClockColors()
 
         # Хинт иконки — все три параметра, в квадрате — график CO2.
         if oData is None:
-            sTip = "HT2000: нет связи"
+            if self.oLastTime is not None:
+                nOffMin = max(1, int((datetime.now() - self.oLastTime).total_seconds() // 60))
+                sTip = "HT2000: нет связи {0} мин".format(nOffMin)
+            else:
+                sTip = "HT2000: нет связи"
             oCo2Color = oAccent
+            sValue = None
         else:
             sTip = "CO2: {0:d} ppm\nT: {1:.1f} °C\nRH: {2:.1f} %".format(
                 oData.co2, oData.temperature, oData.humidity)
             oCo2Color = co2Color(oData.co2)
+            sValue = "{0:d}".format(oData.co2)
+            self._warnIfNeeded(oData.co2)
+        if self.bLogPaused:
+            sTip += "\nзапись на паузе"
         if self.oWeb.is_running():
             for sIp in local_ip_addresses():
                 sTip += "\nвеб: http://{0}:{1}/".format(sIp, self.oWeb.nPort)
 
         self.pTray.setToolTip(sTip)
-        self.pTray.setIcon(QIcon(self._renderIcon(self.co2History, oBg, oCo2Color)))
+        self.pTray.setIcon(QIcon(self._renderIcon(
+            self.co2History, oBg, oCo2Color, sValue, self._bFlash)))
 
     # -- Веб-сервер -------------------------------------------------------
 
@@ -367,8 +400,44 @@ class HT2000TrayMonitor(object):
             "temperature": self.oLastData.temperature,
             "humidity": self.oLastData.humidity,
             "connected": self.bConnected,
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": self.oLastTime.strftime("%Y-%m-%dT%H:%M:%S")
+            if self.oLastTime is not None else None,
         }
+
+    # -- Оповещения и действия -------------------------------------------
+
+    def _warnIfNeeded(self, nCo2):
+        """Одноразовое уведомление при подъёме CO2 в жёлтую/красную зону."""
+        nLevel = 2 if nCo2 >= CO2_WARN_HI else 1 if nCo2 >= CO2_WARN_LO else 0
+        if nLevel > self.nWarnLevel and nLevel > 0:
+            if nLevel >= 2:
+                sTitle = "CO2: {0} ppm".format(nCo2)
+                sMsg = "Уровень CO2 критический — немедленно проветрите помещение!"
+                nIcon = QSystemTrayIcon.Warning
+            else:
+                sTitle = "CO2: {0} ppm".format(nCo2)
+                sMsg = "Уровень CO2 повышен — проветрите помещение."
+                nIcon = QSystemTrayIcon.Information
+            self.pTray.showMessage(sTitle, sMsg, nIcon, 8000)
+        self.nWarnLevel = nLevel
+
+    def _onActivated(self, nReason):
+        """Клик по иконке — открыть веб-страницу (сервер стартует сам)."""
+        if nReason == QSystemTrayIcon.Trigger:
+            self._openWeb()
+
+    def _openWeb(self):
+        if not self.oWeb.is_running():
+            self.aWeb.setChecked(True)          # toggled сам запустит сервер
+        if self.oWeb.is_running():
+            QDesktopServices.openUrl(QUrl(
+                "http://127.0.0.1:{0}/".format(self.oWeb.nPort)))
+
+    def _openDataDir(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(DATA_DIR))
+
+    def _onPauseToggled(self, bPaused):
+        self.bLogPaused = bPaused
 
     def _onWebToggled(self, bChecked):
         if bChecked:
@@ -378,19 +447,39 @@ class HT2000TrayMonitor(object):
                 sys.stderr.write("Не удалось запустить веб-сервер: {0}\n".format(oExc))
                 self.aWeb.setChecked(False)
                 return
+            self.aWeb.setText("Сервер: {0}".format(self.oWeb.nPort))
             print("HT2000 web: " + "  ".join(
                 "http://{0}:{1}/".format(sIp, self.oWeb.nPort)
                 for sIp in local_ip_addresses()))
         else:
             self.oWeb.stop()
+            self.aWeb.setText("Сервер: выкл")
 
-    def _renderIcon(self, values, oBg, oAccent):
+    def _renderIcon(self, values, oBg, oCo2Color, sValue=None, bFlash=False):
         pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
         pixmap.fill(oBg)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN, ICON_SIZE - 2 * MARGIN)
-        self._plot(painter, values, oAccent, rect)
+        # График в верхней части, нижние 14px — текущее значение CO2.
+        rect = QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN,
+                      ICON_SIZE - 2 * MARGIN - VALUE_AREA_H)
+        self._plot(painter, values, oCo2Color, rect)
+        if sValue is not None:
+            oFont = painter.font()
+            oFont.setPixelSize(11)
+            oFont.setBold(True)
+            painter.setFont(oFont)
+            painter.setPen(QPen(oCo2Color))
+            oTextRect = QRectF(0, ICON_SIZE - VALUE_AREA_H - 2, ICON_SIZE, VALUE_AREA_H)
+            painter.drawText(oTextRect, Qt.AlignHCenter | Qt.AlignVCenter, sValue)
+        if bFlash:
+            oFont = painter.font()
+            oFont.setPixelSize(34)
+            oFont.setBold(True)
+            painter.setFont(oFont)
+            painter.setPen(QPen(CO2_RED))
+            painter.drawText(QRectF(0, 0, ICON_SIZE, ICON_SIZE),
+                             Qt.AlignCenter, "!")
         painter.end()
         return pixmap
 

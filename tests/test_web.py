@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ht2000_web import (HT2000WebError, HT2000WebServer, format_json, format_page,
-                        read_recent, render_graph, render_graphs,
-                        ventilation_lines)
+                        graphs_fragment, read_recent, render_graph,
+                        render_graphs, ventilation_lines)
 
 SNAPSHOT = {
     "co2": 737,
@@ -54,8 +54,26 @@ class TestFormatPage(unittest.TestCase):
         self.assertIn("737 ppm", sHtml)
         self.assertIn("25.9 °C", sHtml)
         self.assertIn("30.1 %", sHtml)
-        self.assertIn('http-equiv="refresh"', sHtml)
         self.assertIn("обновлено: 2026-10-19 12:45:00", sHtml)
+
+    def test_page_no_refresh_meta(self):
+        # Обновление страницы — через JS (fetch), без перезагрузки.
+        sHtml = format_page(SNAPSHOT).decode("utf-8")
+        self.assertNotIn('http-equiv="refresh"', sHtml)
+        self.assertIn('id="ht-graphs"', sHtml)
+        self.assertIn("ht-tip", sHtml)
+
+    def test_page_theme_and_favicon(self):
+        sHtml = format_page(SNAPSHOT).decode("utf-8")
+        self.assertIn("ht-theme", sHtml)                    # кнопка темы
+        self.assertIn("localStorage", sHtml)                # сохранение темы
+        self.assertIn("ht-favicon", sHtml)                  # favicon
+        self.assertIn("data:image/svg+xml;base64,", sHtml)
+
+    def test_favicon_color_matches_level(self):
+        oRed = dict(SNAPSHOT, co2=1500)
+        sHtml = format_page(oRed).decode("utf-8")
+        self.assertIn("ff2d00", sHtml)                      # красный favicon
 
     def test_page_color_classes(self):
         oGreen = dict(SNAPSHOT, co2=500)
@@ -74,9 +92,10 @@ class TestFormatPage(unittest.TestCase):
         sHtml = format_page(SNAPSHOT).decode("utf-8")
         self.assertIn('?range=hour', sHtml)
         self.assertIn('?range=day', sHtml)
+        self.assertIn('?range=week', sHtml)                 # недельный диапазон
 
     def test_invalid_range_falls_back_to_hour(self):
-        sHtml = format_page(SNAPSHOT, sRange="week").decode("utf-8")
+        sHtml = format_page(SNAPSHOT, sRange="invalid").decode("utf-8")
         self.assertIn('class="active"', sHtml)
         # активна ссылка часового диапазона
         nHour = sHtml.index('href="/?range=hour" class="active"')
@@ -140,6 +159,32 @@ class TestGraphs(unittest.TestCase):
         self.assertIn("700", sSvg)          # метка минимума
         self.assertIn("704", sSvg)          # метка максимума
         self.assertIn("<svg", sSvg)
+
+    def test_render_graph_has_stats(self):
+        # 5 точек: значения 700..704 -> мин 700, сред 702, макс 704.
+        sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
+        self.assertIn('class="stats"', sSvg)
+        self.assertIn("мин 700", sSvg)
+        self.assertIn("сред 702", sSvg)
+        self.assertIn("макс 704", sSvg)
+
+    def test_render_graph_now_line(self):
+        oNow = self.aRows[2][0]             # внутри окна
+        sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour",
+                            oNow=oNow)
+        self.assertIn('stroke="#90a4ae"', sSvg)
+        self.assertIn("сейчас", sSvg)
+        # Вне окна линия «сейчас» не рисуется.
+        sSvg2 = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour",
+                             oNow=self.aRows[0][0] - timedelta(hours=5))
+        self.assertNotIn("сейчас", sSvg2)
+
+    def test_render_graph_ventilation_interval_highlight(self):
+        oAt = self.aRows[2][0]              # внутри окна
+        aVert = [oAt]
+        sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour",
+                            aVerticals=aVert)
+        self.assertIn("<rect", sSvg)        # подсветка интервала 30 минут
 
     def test_render_graph_has_markers(self):
         sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
@@ -272,6 +317,23 @@ class TestServer(unittest.TestCase):
         oData = json.loads(oBody.decode("utf-8"))
         self.assertEqual(oData["co2"], 737)
         self.assertAlmostEqual(oData["temperature"], 25.9, places=1)
+
+    def test_graphs_endpoint(self):
+        with tempfile.TemporaryDirectory() as sDir:
+            oNow = datetime.now()
+            sBody = ""
+            for nIndex in range(10):
+                oDt = oNow - timedelta(minutes=10 - nIndex)
+                sBody += "{0};{1};{2};{3}\n".format(
+                    oDt.strftime("%Y-%m-%d %H:%M:%S"), 800 + nIndex, 26.0, 40.0)
+            write_csv(sDir, sBody)
+            self.oServer = start_server(sDataDir=sDir)
+            nCode, oBody, sType = fetch(self.oServer, "/graphs?range=day")
+            self.assertEqual(nCode, 200)
+            self.assertIn("application/json", sType)
+            oData = json.loads(oBody.decode("utf-8"))
+            self.assertIn("<polyline", oData["html"])
+            self.assertIn('class="stats"', oData["html"])
 
     def test_unknown_path_404(self):
         self.oServer = start_server()
