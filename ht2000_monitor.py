@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""HT2000 Monitor — три индикатора в системном трее (CO2, температура, влажность).
+"""HT2000 Monitor — индикатор CO2 в системном трее.
 
 Данные берутся с CO2-монитора SLAB HT2000 (USB HID, см. ht2000_reader.py):
 
-- Три отдельные иконки в трее: CO2, T°C и RH%, каждая со своим графиком
-  (история 32 точки, обновление раз в секунду).
+- Одна иконка в трее: график CO2 (история 32 точки, обновление раз в секунду).
+  Линия красится по уровню: зелёный < 800 ppm, жёлтый 800–1200, красный > 1200.
+- Температура и влажность показываются в хинте иконки (наведение мыши).
 - Цвета берутся с панели часов, как в trayinfo: цвет1 — фон панели (заливка
-  иконки), цвет2 — текст панели (акцент линий). Линия CO2 дополнительно
-  красится по уровню: зелёный < 800 ppm, жёлтый 800–1200, красный > 1200.
+  иконки), цвет2 — текст панели (акцент линий).
 - Раз в минуту текущие значения (дата, время, CO2, T, RH) пишутся в CSV-файл
   data/ht2000_YYYY-MM.csv в каталоге проекта.
-- Контекстное меню «Выход» на каждой иконке.
+- Контекстное меню «Выход» на иконке.
 - Если системный трей недоступен — сообщение в stderr и выход с кодом 1.
 """
 
 import csv
 import os
 import sys
-import time
 from datetime import datetime
 
 from PyQt5.QtCore import QRectF, QTimer, Qt
@@ -29,8 +28,7 @@ from ht2000_reader import HT2000Error, HT2000Reader
 
 ICON_SIZE = 64
 HISTORY = 32
-UPDATE_MS = 1000        # обновление иконок
-LOG_INTERVAL_S = 60     # запись в файл раз в минуту
+UPDATE_MS = 1000        # обновление иконоки
 MARGIN = 4
 PANEL_SAMPLE_Y = 18
 
@@ -118,10 +116,6 @@ class HT2000Logger(object):
                 pass
             self.oFile = None
             self.oWriter = None
-
-
-def gb(nBytes):
-    return nBytes / (1024.0 ** 3)
 
 
 def _sampleStrip(nY, oScreen):
@@ -292,25 +286,18 @@ class HT2000TrayMonitor(object):
         self.bConnected = False
         self.oLastData = None
         self.co2History = [0.0] * HISTORY
-        self.tempHistory = [0.0] * HISTORY
-        self.rhHistory = [0.0] * HISTORY
         self.oReader = HT2000Reader()
         self.oLogger = HT2000Logger()
 
-        self.pCo2Tray = QSystemTrayIcon()
-        self.pTempTray = QSystemTrayIcon()
-        self.pRhTray = QSystemTrayIcon()
+        self.pTray = QSystemTrayIcon()
 
         menu = QMenu()
         actExit = menu.addAction("Выход")
         actExit.triggered.connect(QApplication.instance().quit)
-        for oTray in (self.pCo2Tray, self.pTempTray, self.pRhTray):
-            oTray.setContextMenu(menu)
+        self.pTray.setContextMenu(menu)
 
         self.tick()
-
-        for oTray in (self.pCo2Tray, self.pTempTray, self.pRhTray):
-            oTray.show()
+        self.pTray.show()
 
         self.pTimer = QTimer()
         self.pTimer.timeout.connect(self.tick)
@@ -337,56 +324,44 @@ class HT2000TrayMonitor(object):
 
         if oData is None:
             self.co2History.append(0.0)
-            self.tempHistory.append(0.0)
-            self.rhHistory.append(0.0)
             del self.co2History[:-HISTORY]
-            del self.tempHistory[:-HISTORY]
-            del self.rhHistory[:-HISTORY]
         else:
             self.co2History.append(float(oData.co2))
-            self.tempHistory.append(oData.temperature)
-            self.rhHistory.append(oData.humidity)
             del self.co2History[:-HISTORY]
-            del self.tempHistory[:-HISTORY]
-            del self.rhHistory[:-HISTORY]
             self.oLogger.log(oData)
 
         # Цвета берутся с панели часов (как trayinfo).
         oBg, oAccent = detectClockColors()
 
-        sSuffix = "" if self.bConnected else " (нет связи)"
-        self.pCo2Tray.setToolTip("CO2: {0:4d} ppm{1}".format(
-            int(round(oData.co2)) if oData else 0, sSuffix))
-        self.pTempTray.setToolTip("T: {0:4.1f} °C{1}".format(
-            oData.temperature if oData else 0.0, sSuffix))
-        self.pRhTray.setToolTip("RH: {0:4.1f} %{1}".format(
-            oData.humidity if oData else 0.0, sSuffix))
+        # Хинт иконки — все три параметра, в квадрате — график CO2.
+        if oData is None:
+            sTip = "HT2000: нет связи"
+            oCo2Color = oAccent
+        else:
+            sTip = "CO2: {0:d} ppm\nT: {1:.1f} °C\nRH: {2:.1f} %".format(
+                oData.co2, oData.temperature, oData.humidity)
+            oCo2Color = co2Color(oData.co2)
 
-        oCo2Color = co2Color(oData.co2) if oData else oAccent
-        self.pCo2Tray.setIcon(QIcon(
-            self._renderIcon(self.co2History, oBg, oCo2Color, CO2_MAX_SCALE)))
-        self.pTempTray.setIcon(QIcon(
-            self._renderIcon(self.tempHistory, oBg, oAccent, 100.0)))
-        self.pRhTray.setIcon(QIcon(
-            self._renderIcon(self.rhHistory, oBg, oAccent, 100.0)))
+        self.pTray.setToolTip(sTip)
+        self.pTray.setIcon(QIcon(self._renderIcon(self.co2History, oBg, oCo2Color)))
 
-    def _renderIcon(self, values, oBg, oAccent, dMax):
+    def _renderIcon(self, values, oBg, oAccent):
         pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
         pixmap.fill(oBg)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN, ICON_SIZE - 2 * MARGIN)
-        self._plot(painter, values, oAccent, rect, dMax)
+        self._plot(painter, values, oAccent, rect)
         painter.end()
         return pixmap
 
-    def _plot(self, painter, values, color, rect, dMax):
-        # Линия нормируется на свою шкалу: CO2 0..3000 ppm, T/RH 0..100%.
+    def _plot(self, painter, values, color, rect):
+        # Линия нормируется на шкалу CO2 0..3000 ppm.
         n = len(values)
         path = QPainterPath()
         for i, value in enumerate(values):
             x = rect.left() + i * (rect.width() / (n - 1))
-            y = rect.bottom() - min(value, dMax) / dMax * rect.height()
+            y = rect.bottom() - min(value, CO2_MAX_SCALE) / CO2_MAX_SCALE * rect.height()
             if i == 0:
                 path.moveTo(x, y)
             else:
@@ -415,8 +390,6 @@ def main():
         sys.stderr.write("Ошибка: системный трей недоступен (QSystemTrayIcon.isSystemTrayAvailable() == False)\n")
         return 1
 
-    # Три независимых монитора: каждый со своей иконкой и историей.
-    # Проще, чем один класс с тремя слогами: у CO2 своя шкала и цвета.
     app._ht2000 = HT2000TrayMonitor()
     return app.exec_()
 
