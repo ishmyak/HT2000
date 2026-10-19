@@ -90,6 +90,9 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
  .graph .empty{{color:#bbb;font-size:13px;padding:30px 0;text-align:center}}
  .legend{{font-size:12px;color:#999;max-width:{svgw}px;margin:0 auto;text-align:left;padding:0 12px}}
  .legend .sw{{display:inline-block;width:26px;border-top:2px dashed #b0bec5;margin-right:8px;vertical-align:middle}}
+ #ht-tip{{position:fixed;background:rgba(40,45,50,.92);color:#fff;font:11px Verdana,sans-serif;padding:4px 8px;border-radius:4px;pointer-events:none;display:none;z-index:10;white-space:nowrap}}
+ .ht-lv,.ht-lh{{stroke:#b0bec5;stroke-width:1;stroke-dasharray:4,3}}
+ .ht-c{{fill:#fff;stroke:#333;stroke-width:1.5}}
 </style>
 </head>
 <body>
@@ -108,6 +111,47 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
 {legend}
 {graphs}
 </div>
+<div id="ht-tip"></div>
+<script>
+(function(global){{
+  var tip = document.getElementById('ht-tip');
+  var svgs = Array.prototype.slice.call(document.querySelectorAll('svg[data-pts]'));
+  var X0 = {sx0}, Y0 = {sy0}, Y1 = {sy1}; /* границы области графика в viewBox */
+  svgs.forEach(function(svg){{
+    var pts = JSON.parse(svg.getAttribute('data-pts'));
+    svg.addEventListener('mousemove', function(ev){{
+      if (pts.length < 1) return;
+      var r = svg.getBoundingClientRect();
+      var vb = svg.viewBox.baseVal;
+      var px = (ev.clientX - r.left) / r.width * vb.width;
+      var py = (ev.clientY - r.top) / r.height * vb.height;
+      var best = pts[0], bestD = Infinity;
+      for (var i = 0; i < pts.length; i++) {{
+        var d = Math.abs(pts[i][0] - px);
+        if (d < bestD) {{ bestD = d; best = pts[i]; }}
+      }}
+      var g = svg.querySelector('g.ht-cross');
+      if (!g) {{
+        g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'ht-cross');
+        svg.appendChild(g);
+      }}
+      g.innerHTML = '<line class="ht-lv" x1="'+best[0]+'" y1="'+Y0+'" x2="'+best[0]+'" y2="'+Y1+'"/>' +
+                    '<line class="ht-lh" x1="'+X0+'" y1="'+best[1]+'" x2="'+best[0]+'" y2="'+best[1]+'"/>' +
+                    '<circle class="ht-c" cx="'+best[0]+'" cy="'+best[1]+'" r="3.5"/>';
+      tip.textContent = best[2] + ' · ' + best[3];
+      tip.style.left = (r.left + best[0] / vb.width * r.width + 14) + 'px';
+      tip.style.top = (r.top + best[1] / vb.height * r.height - 34) + 'px';
+      tip.style.display = 'block';
+    }});
+    svg.addEventListener('mouseleave', function(){{
+      tip.style.display = 'none';
+      var g = svg.querySelector('g.ht-cross');
+      if (g) g.innerHTML = '';
+    }});
+  }});
+}})(window);
+</script>
 </body>
 </html>
 """
@@ -252,9 +296,20 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
             dX0 - 6, fY(dV) + 3.5, ("{0:" + sValueFormat + "}").format(dV))
 
     sTitle += " · {0} — {1}".format(_format_time(oT0, sRange), _format_time(oT1, sRange))
+
+    # Все точки для JS-тултипа: [x, y, время, значение] — наведение мыши
+    # показывает снимок в этой точке и пунктиры на оси.
+    aData = []
+    for oRow in aRows:
+        dV = oRow[nValueIndex]
+        aData.append([round(fX(oRow[0]), 1), round(fY(dV), 1),
+                      _format_time(oRow[0], sRange),
+                      ("{0:" + sValueFormat + "}").format(dV)])
+    sDataAttr = " data-pts='{0}'".format(json.dumps(aData, ensure_ascii=False))
+
     sSvg = ('<svg viewBox="0 0 {0} {1}" preserveAspectRatio="xMidYMid meet" '
-            'xmlns="http://www.w3.org/2000/svg">{2}{3}{4}{5}</svg>').format(
-        SVG_WIDTH, SVG_HEIGHT, sVerticals, sLine, sMarks, sLabels)
+            'xmlns="http://www.w3.org/2000/svg"{6}>{2}{3}{4}{5}</svg>').format(
+        SVG_WIDTH, SVG_HEIGHT, sVerticals, sLine, sMarks, sLabels, sDataAttr)
     return GRAPH_TEMPLATE.format(title=sTitle, body=sSvg)
 
 
@@ -331,6 +386,9 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         legend=sLegend,
         graphs=sGraphs,
         svgw=SVG_WIDTH,
+        sx0=SVG_LEFT,
+        sy0=SVG_TOP,
+        sy1=SVG_HEIGHT - SVG_BOTTOM,
     ).encode("utf-8")
 
 
