@@ -14,9 +14,10 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ht2000_web import (HT2000WebError, HT2000WebServer, format_json, format_page,
-                        graphs_fragment, read_recent, render_graph,
-                        render_graphs, ventilation_lines)
+from ht2000_web import (HT2000WebError, HT2000WebServer, comfort_badge,
+                        format_json, format_page, graphs_fragment,
+                        read_recent, render_graph, render_graphs,
+                        snapshot_with_comfort, ventilation_lines)
 
 SNAPSHOT = {
     "co2": 737,
@@ -74,6 +75,22 @@ class TestFormatPage(unittest.TestCase):
         oRed = dict(SNAPSHOT, co2=1500)
         sHtml = format_page(oRed).decode("utf-8")
         self.assertIn("ff2d00", sHtml)                      # красный favicon
+
+    def test_page_comfort_badges(self):
+        # 25.9 °C выше допустимой зоны (20–25, холодный сезон), 30.1 %
+        # ниже нормы влажности — стабильно независимо от сезона.
+        sHtml = format_page(SNAPSHOT).decode("utf-8")
+        self.assertIn('class="st_bad"', sHtml)              # T вне допустимой
+        self.assertIn("выше допустимой 20–25 °C", sHtml)
+        self.assertIn('class="st_warn"', sHtml)             # RH ниже нормы
+        self.assertIn("ниже нормы 40–60 %", sHtml)
+        self.assertNotIn('class="st_ok"', sHtml)
+
+    def test_page_comfort_badges_ok(self):
+        oOk = dict(SNAPSHOT, temperature=23.0, humidity=50.0)
+        sHtml = format_page(oOk).decode("utf-8")
+        self.assertIn('class="st_ok"', sHtml)
+        self.assertIn("норма ", sHtml)
 
     def test_page_color_classes(self):
         oGreen = dict(SNAPSHOT, co2=500)
@@ -186,6 +203,35 @@ class TestGraphs(unittest.TestCase):
                             aVerticals=aVert)
         self.assertIn("<rect", sSvg)        # подсветка интервала 30 минут
 
+    def test_render_graph_band_norm(self):
+        # Зоны нормы (оптимальная и допустимая) рисуются, когда данные
+        # попадают в диапазон, а сводка получает текст норм даже вне шкалы.
+        aRows = [(oDt, dCo2, 23.0, dRh) for oDt, dCo2, _, dRh in self.aRows]
+        sSvg = render_graph("Температура, °C", aRows, 2, "#123", ".1f",
+                            "hour", aBand=(22.0, 24.0), aBandAcc=(20.0, 25.0))
+        self.assertIn("rgba(46,125,50,0.12)", sSvg)   # BAND_FILL
+        self.assertIn("rgba(46,125,50,0.05)", sSvg)   # BAND_ACC_FILL
+        self.assertIn("<rect", sSvg)
+        self.assertIn("норма 22–24 (допустимо 20–25)", sSvg)
+        sSvg2 = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
+        self.assertNotIn("rgba(46,125,50", sSvg2)
+        self.assertNotIn("норма ", sSvg2)
+
+    def test_render_graph_band_outside_scale(self):
+        # Зоны ниже шкалы (T=25 при оптимуме 22–24) — полос нет,
+        # норма в сводке остаётся.
+        sSvg = render_graph("Температура, °C", self.aRows, 2, "#123", ".1f",
+                            "hour", aBand=(22.0, 24.0), aBandAcc=(20.0, 25.0))
+        self.assertNotIn("height=\"0", sSvg)
+        self.assertIn("норма 22–24", sSvg)
+
+    def test_render_graphs_have_bands(self):
+        # Температура: две зоны (оптимальная + допустимая), влажность: одна.
+        aRows = [(oDt, dCo2, 23.0, 50.0) for oDt, dCo2, _, _ in self.aRows]
+        sHtml = render_graphs(aRows, "hour")
+        self.assertGreaterEqual(sHtml.count("rgba(46,125,50,0.12)"), 2)
+        self.assertGreaterEqual(sHtml.count("rgba(46,125,50,0.05)"), 1)
+
     def test_render_graph_has_markers(self):
         sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
         self.assertEqual(sSvg.count("<circle"), 5)   # все точки короткого ряда
@@ -278,6 +324,38 @@ class TestGraphs(unittest.TestCase):
                          [(11, 0), (13, 0), (14, 30), (16, 0)])
 
 
+class TestComfortBadge(unittest.TestCase):
+    def test_badge_classes(self):
+        sOk = comfort_badge("23.0 °C", "ok", "22–24 °C", "20–25 °C")
+        self.assertIn("st_ok", sOk)
+        self.assertIn("✓", sOk)
+        self.assertIn('title="норма 22–24 °C"', sOk)
+        sWarn = comfort_badge("24.5 °C", "warn_high", "22–24 °C", "20–25 °C")
+        self.assertIn("st_warn", sWarn)
+        self.assertIn("выше оптимальной 22–24 °C", sWarn)
+        self.assertIn("допустимо 20–25 °C", sWarn)
+        sBad = comfort_badge("19.5 °C", "bad_low", "22–24 °C", "20–25 °C")
+        self.assertIn("st_bad", sBad)
+        self.assertIn("ниже допустимой 20–25 °C", sBad)
+        # Одна зона (влажность): ниже — жёлтый, выше — красный.
+        sHumLow = comfort_badge("30.1 %", "low", "40–60 %")
+        self.assertIn("st_warn", sHumLow)
+        self.assertIn("ниже нормы 40–60 %", sHumLow)
+        sHumHigh = comfort_badge("65.0 %", "high", "40–60 %")
+        self.assertIn("st_bad", sHumHigh)
+        self.assertIn("выше нормы 40–60 %", sHumHigh)
+
+    def test_snapshot_with_comfort(self):
+        oRes = snapshot_with_comfort(SNAPSHOT)
+        self.assertEqual(oRes["temp_status"], "bad_high")   # 25.9 > 25
+        self.assertEqual(oRes["rh_status"], "low")          # 30.1 %
+        self.assertEqual(oRes["temp_range_txt"], "22–24 °C")   # октябрь
+        self.assertEqual(oRes["temp_acc_range_txt"], "20–25 °C")
+        self.assertEqual(oRes["rh_range_txt"], "40–60 %")
+        self.assertEqual(oRes["co2"], SNAPSHOT["co2"])      # остальное сохранено
+        self.assertIsNone(snapshot_with_comfort(None))
+
+
 class TestServer(unittest.TestCase):
     def tearDown(self):
         if self.oServer is not None:
@@ -334,6 +412,24 @@ class TestServer(unittest.TestCase):
             oData = json.loads(oBody.decode("utf-8"))
             self.assertIn("<polyline", oData["html"])
             self.assertIn('class="stats"', oData["html"])
+            self.assertIn("rgba(46,125,50", oData["html"])  # зона нормы
+
+    def test_data_endpoint_comfort_fields(self):
+        self.oServer = start_server()
+        try:
+            nCode, oBody, sType = fetch(self.oServer, "/data")
+            oData = json.loads(oBody.decode("utf-8"))
+            self.assertEqual(nCode, 200)
+            self.assertIn("temp_status", oData)
+            self.assertIn("rh_status", oData)
+            self.assertIn("temp_range_txt", oData)
+            self.assertIn("temp_acc_range_txt", oData)
+            self.assertIn("rh_range_txt", oData)
+            # 25.9 °C выше допустимых 25 °C, 30.1 % ниже нормы — в любом сезоне.
+            self.assertEqual(oData["temp_status"], "bad_high")
+            self.assertEqual(oData["rh_status"], "low")
+        finally:
+            self.oServer.stop()
 
     def test_unknown_path_404(self):
         self.oServer = start_server()

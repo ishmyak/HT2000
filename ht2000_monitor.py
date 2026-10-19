@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
 from ht2000_web import HT2000WebError, HT2000WebServer, local_ip_addresses
+from comfort import comfort_tooltip, configure_from_file
 
 ICON_SIZE = 64
 HISTORY = 32
@@ -58,7 +59,10 @@ CLOCK_BG_TOLERANCE = 40
 PANEL_STRIP_H = 30
 PANEL_STRIP_STEP = 8
 CO2_MAX_SCALE = 3000    # шкала графика CO2, ppm
-VALUE_AREA_H = 14       # нижняя полоса иконки под число CO2
+# Нижняя полоса иконки: плашка-бейдж с числом CO2. 24px из 64, чтобы текст
+# (18px bold) оставался читаемым после масштабирования треем до ~22px.
+VALUE_AREA_H = 24
+BADGE_MARGIN = 2        # отступ плашки от края иконки
 
 # Порог первого уведомления CO2 (проветрите помещение).
 NOTIFY_CO2 = 800
@@ -290,6 +294,15 @@ def co2Color(nPpm):
     return QColor(CO2_GREEN)
 
 
+def badgeTextColor(oBg):
+    """Чёрный или белый текст на плашке заданного цвета.
+
+    Выбор по яркости Rec.601: светлый фон (жёлтый) — тёмный текст,
+    тёмный фон (зелёный/красный) — белый текст."""
+    nLuma = (299 * oBg.red() + 587 * oBg.green() + 114 * oBg.blue()) // 1000
+    return QColor("#202020") if nLuma > 140 else QColor("#ffffff")
+
+
 class HT2000TrayMonitor(object):
     def __init__(self):
         self.bConnected = False
@@ -374,8 +387,8 @@ class HT2000TrayMonitor(object):
             oCo2Color = oAccent
             sValue = None
         else:
-            sTip = "CO2: {0:d} ppm\nT: {1:.1f} °C\nRH: {2:.1f} %".format(
-                oData.co2, oData.temperature, oData.humidity)
+            sTip = "CO2: {0:d} ppm\n{1}".format(
+                oData.co2, comfort_tooltip(oData.temperature, oData.humidity))
             oCo2Color = co2Color(oData.co2)
             sValue = "{0:d}".format(oData.co2)
             self._warnIfNeeded(oData.co2)
@@ -460,18 +473,25 @@ class HT2000TrayMonitor(object):
         pixmap.fill(oBg)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        # График в верхней части, нижние 14px — текущее значение CO2.
+        # График в верхней части, нижняя полоса — плашка-бейдж с числом CO2.
         rect = QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN,
                       ICON_SIZE - 2 * MARGIN - VALUE_AREA_H)
         self._plot(painter, values, oCo2Color, rect)
         if sValue is not None:
+            # Плашка цвета уровня CO2: скруглённый прямоугольник почти на
+            # всю ширину иконки, по центру — крупное число контрастного цвета.
+            badge = QRectF(BADGE_MARGIN, ICON_SIZE - VALUE_AREA_H - BADGE_MARGIN,
+                           ICON_SIZE - 2 * BADGE_MARGIN,
+                           VALUE_AREA_H - 2 * BADGE_MARGIN)
+            path = QPainterPath()
+            path.addRoundedRect(badge, 4.0, 4.0)
+            painter.fillPath(path, oCo2Color)
             oFont = painter.font()
-            oFont.setPixelSize(11)
+            oFont.setPixelSize(18)
             oFont.setBold(True)
             painter.setFont(oFont)
-            painter.setPen(QPen(oCo2Color))
-            oTextRect = QRectF(0, ICON_SIZE - VALUE_AREA_H - 2, ICON_SIZE, VALUE_AREA_H)
-            painter.drawText(oTextRect, Qt.AlignHCenter | Qt.AlignVCenter, sValue)
+            painter.setPen(QPen(badgeTextColor(oCo2Color)))
+            painter.drawText(badge, Qt.AlignHCenter | Qt.AlignVCenter, sValue)
         if bFlash:
             oFont = painter.font()
             oFont.setPixelSize(34)
@@ -512,6 +532,10 @@ class HT2000TrayMonitor(object):
 
 
 def main():
+    # Нормы микроклимата: по умолчанию встроенные, при наличии config.json —
+    # из него (см. comfort.configure_from_file).
+    configure_from_file()
+
     app = QApplication(sys.argv)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():

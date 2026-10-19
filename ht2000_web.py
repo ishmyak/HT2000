@@ -35,6 +35,8 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from comfort import comfort_status, humidity_ranges, temperature_ranges
+
 START_PORT = 8080
 MAX_PORT_ATTEMPTS = 10
 REFRESH_SECONDS = 5
@@ -62,6 +64,10 @@ GRAPH_TEMP_COLOR = "#ef6c00"
 GRAPH_RH_COLOR = "#2e7d32"
 NOW_LINE_COLOR = "#90a4ae"
 VENT_FILL = "rgba(144,164,174,0.16)"
+# Зоны нормы (см. comfort.py) на графиках температуры и влажности:
+# допустимая — бледная, оптимальная — ярче.
+BAND_FILL = "rgba(46,125,50,0.12)"
+BAND_ACC_FILL = "rgba(46,125,50,0.05)"
 # Линия «сейчас» рисуется, пока данные не старше этого допуска
 # (запись идёт раз в минуту, обрыв/пауза ~10 минут не гасят линию).
 NOW_LINE_TOLERANCE_MIN = 10
@@ -92,9 +98,12 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
  td,th{{padding:7px 18px;font-size:15px}}
  th{{color:var(--muted);font-weight:normal;text-align:right}}
  td{{min-width:120px}}
- .co2_g{{color:{green};font-weight:bold}}
- .co2_y{{color:{yellow};font-weight:bold}}
- .co2_r{{color:{red};font-weight:bold}}
+.co2_g{{color:{green};font-weight:bold}}
+  .co2_y{{color:{yellow};font-weight:bold}}
+  .co2_r{{color:{red};font-weight:bold}}
+  .st_ok{{color:{green};font-weight:bold}}
+  .st_warn{{color:{yellow};font-weight:bold}}
+  .st_bad{{color:{red};font-weight:bold}}
  .status{{color:var(--status);margin-top:12px;font-size:12px}}
  .status.warn{{color:{red};font-weight:bold}}
  .range{{margin:18px auto 6px;font-size:14px}}
@@ -177,6 +186,35 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
     favicon.setAttribute('href', 'data:image/svg+xml;base64,' + btoa(svg));
   }}
 
+  /* Бейдж нормы: ✓ зелёный (норма) / ⚠ жёлтый (вне оптимума, в допустимой)
+     / ⚠ красный (вне допустимой; для влажности: ниже — жёлтый, выше — красный) */
+  function comfortSpan(status, rangeTxt, accTxt){{
+    var sp = document.createElement('span');
+    var mark = '⚠', title;
+    if (status === 'ok') {{
+      sp.className = 'st_ok'; mark = '✓';
+      title = 'норма ' + rangeTxt;
+    }} else {{
+      var low = status.indexOf('low') >= 0;
+      var where = low ? 'ниже' : 'выше';
+      if (accTxt !== rangeTxt) {{
+        if (status.indexOf('warn') === 0) {{
+          sp.className = 'st_warn';
+          title = where + ' оптимальной ' + rangeTxt + ' (допустимо ' + accTxt + ')';
+        }} else {{
+          sp.className = 'st_bad';
+          title = where + ' допустимой ' + accTxt;
+        }}
+      }} else {{
+        sp.className = low ? 'st_warn' : 'st_bad';
+        title = where + ' нормы ' + rangeTxt;
+      }}
+    }}
+    sp.textContent = mark;
+    sp.title = title;
+    return sp;
+  }}
+
   /* Crosshair: один контейнер для тултипа, линия на всех графиках */
   function clearCross(){{
     tip.style.display = 'none';
@@ -248,11 +286,15 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
                          co2Color(d.co2) === '{yellow}' ? 'co2_y' : 'co2_g';
       }}
       var t = document.getElementById('ht-temp');
-      if (d.temperature !== undefined && d.temperature !== null)
-        t.textContent = d.temperature.toFixed(1) + ' °C';
+      if (d.temperature !== undefined && d.temperature !== null){{
+        t.textContent = d.temperature.toFixed(1) + ' °C ';
+        if (d.temp_status) t.appendChild(comfortSpan(d.temp_status, d.temp_range_txt, d.temp_acc_range_txt));
+      }}
       var h = document.getElementById('ht-hum');
-      if (d.humidity !== undefined && d.humidity !== null)
-        h.textContent = d.humidity.toFixed(1) + ' %';
+      if (d.humidity !== undefined && d.humidity !== null){{
+        h.textContent = d.humidity.toFixed(1) + ' % ';
+        if (d.rh_status) h.appendChild(comfortSpan(d.rh_status, d.rh_range_txt, d.rh_acc_range_txt));
+      }}
       var st = document.getElementById('ht-status');
       var age = parseAge(d.time);
       if (d.connected && age !== null && age < 180000) {{
@@ -333,13 +375,17 @@ def _format_time(oDt, sRange):
 
 
 def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
-                 aVerticals=None, oNow=None, oNowLabel=None):
+                 aVerticals=None, oNow=None, oNowLabel=None,
+                 aBand=None, aBandAcc=None):
     """SVG-график одной величины из строк read_recent.
 
     aRows — список (datetime, co2, temp, rh); nValueIndex — индекс величины;
     aVerticals — временные отметки (datetime) проветривания: вертикальные
     пунктирные линии + подсветка интервала после каждой;
-    oNow — момент "сейчас": вертикальная линия, если попал в окно графика."""
+    oNow — момент "сейчас": вертикальная линия, если попал в окно графика;
+    aBand — оптимальная зона нормы (нижняя, верхняя) в единицах величины;
+    aBandAcc — допустимая зона нормы (бледная полоса позади оптимальной).
+    Зоны — по comfort.py."""
     if len(aRows) < 2:
         return GRAPH_TEMPLATE.format(
             title=sTitle, body='<div class="empty">нет данных за период</div>',
@@ -380,6 +426,23 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
                 continue
             sVentRects += '<rect x="{0:.1f}" y="{1}" width="{2:.1f}" height="{3}" ' \
                           'fill="{4}"/>'.format(dA, dY0, dB - dA, dY1 - dY0, VENT_FILL)
+
+    # Зона нормы: допустимая — бледная полоса позади, оптимальная — ярче.
+    sBand = ""
+
+    def _band(dLow, dHigh, sFill):
+        dBandTop = min(max(fY(dHigh), dY0), dY1)
+        dBandBot = min(max(fY(dLow), dY0), dY1)
+        if dBandBot - dBandTop > 0.5:
+            return '<rect x="{0}" y="{1:.1f}" width="{2}" height="{3:.1f}" ' \
+                   'fill="{4}"/>'.format(dX0, dBandTop, dX1 - dX0,
+                                         dBandBot - dBandTop, sFill)
+        return ""
+
+    if aBandAcc is not None and aBandAcc != aBand:
+        sBand += _band(aBandAcc[0], aBandAcc[1], BAND_ACC_FILL)
+    if aBand is not None:
+        sBand += _band(aBand[0], aBand[1], BAND_FILL)
 
     aPts = ["{0:.1f},{1:.1f}".format(fX(oRow[0]), fY(oRow[nValueIndex])) for oRow in aRows]
     sLine = "<polyline fill=\"none\" stroke=\"{0}\" stroke-width=\"1.5\" " \
@@ -438,23 +501,40 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
     sTitle += " · {0} — {1}".format(_format_time(oT0, sRange), _format_time(oT1, sRange))
     sSvg = ('<svg viewBox="0 0 {0} {1}" preserveAspectRatio="xMidYMid meet" '
             'xmlns="http://www.w3.org/2000/svg"{6}>{2}{3}{4}{5}{7}</svg>').format(
-        SVG_WIDTH, SVG_HEIGHT, sVentRects, sVerticals, sNow, sLine,
+        SVG_WIDTH, SVG_HEIGHT, sBand + sVentRects, sVerticals, sNow, sLine,
         sDataAttr, sMarks + sLabels)
     sStats = "мин {0} · сред {1} · макс {2}".format(
         ("{0:" + sValueFormat + "}").format(min(aVals)),
         ("{0:" + sValueFormat + "}").format(dAvg),
         ("{0:" + sValueFormat + "}").format(max(aVals)))
+    if aBand is not None:
+        # Норма видна и тогда, когда зона не пересекает шкалу графика.
+        if aBandAcc is not None and aBandAcc != aBand:
+            sStats += " · норма {0:.0f}–{1:.0f} (допустимо {2:.0f}–{3:.0f})".format(
+                aBand[0], aBand[1], aBandAcc[0], aBandAcc[1])
+        else:
+            sStats += " · норма {0:.0f}–{1:.0f}".format(aBand[0], aBand[1])
     return GRAPH_TEMPLATE.format(title=sTitle, body=sSvg, stats=sStats)
 
 
 def render_graphs(aRows, sRange, aVerticals=None, oNow=None):
-    """Три SVG-графика (CO2, температура, влажность) для страницы."""
+    """Три SVG-графика (CO2, температура, влажность) для страницы.
+
+    На графике температуры — зоны нормы (оптимальная и допустимая), на
+    графике влажности — одна зона (см. comfort.py; сезон по oNow)."""
+    if oNow is None:
+        oNow = datetime.now()
     sCo2 = render_graph("CO₂, ppm", aRows, 1, GRAPH_CO2_COLOR, ".0f", sRange,
                         aVerticals, oNow)
+    oTOpt, oTAcc = temperature_ranges(oNow)
     sTemp = render_graph("Температура, °C", aRows, 2, GRAPH_TEMP_COLOR, ".1f",
-                         sRange, aVerticals, oNow)
+                         sRange, aVerticals, oNow,
+                         aBand=oTOpt, aBandAcc=oTAcc)
+    oHOpt, oHAcc = humidity_ranges(oNow)
     sRh = render_graph("Влажность, %", aRows, 3, GRAPH_RH_COLOR, ".1f",
-                       sRange, aVerticals, oNow)
+                       sRange, aVerticals, oNow,
+                       aBand=oHOpt if oHOpt == oHAcc else oHAcc,
+                       aBandAcc=None if oHOpt == oHAcc else oHOpt)
     return sCo2 + sTemp + sRh
 
 
@@ -514,6 +594,39 @@ def co2_css_class(nPpm):
     return "co2_g"
 
 
+def comfort_range_txt(oRange, sUnit):
+    """Текст диапазона нормы: '22–24 °C' или '40–60 %'."""
+    return "{0:.0f}–{1:.0f} {2}".format(oRange[0], oRange[1], sUnit)
+
+
+def comfort_badge(sValue, sStatus, sOptTxt, sAccTxt=None):
+    """Значение + бейдж статуса нормы ('24.5 °C <span …>⚠</span>').
+
+    ✓ зелёный — ok; ⚠ жёлтый (st_warn) — вне оптимума, но в допустимой зоне
+    (для влажности — ниже нормы); ⚠ красный (st_bad) — вне допустимой зоны
+    (для влажности — выше нормы). Подсказка title — направление и зоны."""
+    if sStatus == "ok":
+        return ('{0} <span class="st_ok" title="норма {1}">✓</span>'.format(
+            sValue, sOptTxt))
+    bLow = sStatus.endswith("low")
+    sWhere = "ниже" if bLow else "выше"
+    if sStatus.startswith("warn"):
+        sTitle = "{0} оптимальной {1}".format(sWhere, sOptTxt)
+        if sAccTxt is not None and sAccTxt != sOptTxt:
+            sTitle += " (допустимо {0})".format(sAccTxt)
+        return ('{0} <span class="st_warn" title="{1}">⚠</span>'.format(
+            sValue, sTitle))
+    if sAccTxt is not None and sAccTxt != sOptTxt:
+        sTitle = "{0} допустимой {1}".format(sWhere, sAccTxt)
+        sClass = "st_bad"
+    else:
+        # Одна зона (влажность): ниже нормы — жёлтый, выше — красный.
+        sTitle = "{0} нормы {1}".format(sWhere, sOptTxt)
+        sClass = "st_warn" if sStatus == "low" else "st_bad"
+    return ('{0} <span class="{1}" title="{2}">⚠</span>'.format(
+        sValue, sClass, sTitle))
+
+
 def co2_color(nPpm):
     """Цвет CO2 по уровню (для favicon и линий)."""
     if nPpm >= CO2_WARN_HI:
@@ -549,8 +662,20 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         nCo2 = oSnapshot["co2"]
         sCo2 = "{0} ppm".format(nCo2)
         sClass = co2_css_class(nCo2)
-        sTemp = "{0:.1f} °C".format(oSnapshot["temperature"])
-        sHum = "{0:.1f} %".format(oSnapshot["humidity"])
+        oStatus = comfort_status(oWhen, oSnapshot["temperature"],
+                                 oSnapshot["humidity"])
+        oTOpt, oTAcc = temperature_ranges(oWhen)
+        oHOpt, oHAcc = humidity_ranges(oWhen)
+        sTemp = comfort_badge(
+            "{0:.1f} °C".format(oSnapshot["temperature"]),
+            oStatus["temperature"],
+            comfort_range_txt(oTOpt, "°C"),
+            comfort_range_txt(oTAcc, "°C"))
+        sHum = comfort_badge(
+            "{0:.1f} %".format(oSnapshot["humidity"]),
+            oStatus["humidity"],
+            comfort_range_txt(oHOpt, "%"),
+            comfort_range_txt(oHAcc, "%"))
         sStatus = "обновлено: {0}".format(oSnapshot.get("time", ""))
 
     sFragment = graphs_fragment(sDataDir, sRange, oWhen)
@@ -583,6 +708,30 @@ def format_json(oSnapshot):
     """Снимок в JSON (bytes)."""
     return json.dumps(oSnapshot if oSnapshot is not None
                       else {"connected": False}).encode("utf-8")
+
+
+def snapshot_with_comfort(oSnapshot):
+    """Добавляет в снимок статусы норм T/RH и тексты зон норм.
+
+    Статусы температуры: ok / warn_low / warn_high / bad_low / bad_high;
+    влажности: ok / low / high. Сезон определяется по текущей дате —
+    JS-обновление страницы каждые 5 секунд автоматически переключает
+    нормы при смене сезона."""
+    if not oSnapshot:
+        return oSnapshot
+    oWhen = datetime.now()
+    oStatus = comfort_status(oWhen, oSnapshot["temperature"],
+                             oSnapshot["humidity"])
+    oTOpt, oTAcc = temperature_ranges(oWhen)
+    oHOpt, oHAcc = humidity_ranges(oWhen)
+    oRes = dict(oSnapshot)
+    oRes["temp_status"] = oStatus["temperature"]
+    oRes["rh_status"] = oStatus["humidity"]
+    oRes["temp_range_txt"] = comfort_range_txt(oTOpt, "°C")
+    oRes["temp_acc_range_txt"] = comfort_range_txt(oTAcc, "°C")
+    oRes["rh_range_txt"] = comfort_range_txt(oHOpt, "%")
+    oRes["rh_acc_range_txt"] = comfort_range_txt(oHAcc, "%")
+    return oRes
 
 
 # -- Сеть -------------------------------------------------------------------
@@ -710,7 +859,8 @@ class _HT2000Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json; charset=utf-8",
                        json.dumps({"html": sHtml}).encode("utf-8"))
         elif oUrl.path == "/data":
-            self._send(200, "application/json; charset=utf-8", format_json(oSnapshot))
+            self._send(200, "application/json; charset=utf-8",
+                       format_json(snapshot_with_comfort(oSnapshot)))
         else:
             self._send(404, "text/plain; charset=utf-8", b"not found")
 
