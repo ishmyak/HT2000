@@ -40,6 +40,10 @@ BIND_ADDRESS = "0.0.0.0"
 RANGES = ("hour", "day")        # доступные диапазоны графиков
 RANGE_HOURS = {"hour": 1, "day": 24}
 
+# Время проветривания: вертикальные линии на графиках (часы, минуты).
+VENTILATION_TIMES = ((11, 0), (13, 0), (14, 30), (16, 0))
+VENTILATION_LABEL = "проветривание"
+
 CO2_WARN_LO = 800
 CO2_WARN_HI = 1200
 CO2_COLOR_GREEN = "#00c853"
@@ -84,6 +88,8 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
  .graph svg{{width:100%;height:auto;display:block}}
  .graph text{{font-family:Verdana,sans-serif;font-size:10px;fill:#999}}
  .graph .empty{{color:#bbb;font-size:13px;padding:30px 0;text-align:center}}
+ .legend{{font-size:12px;color:#999;max-width:{svgw}px;margin:0 auto;text-align:left;padding:0 12px}}
+ .legend .sw{{display:inline-block;width:26px;border-top:2px dashed #b0bec5;margin-right:8px;vertical-align:middle}}
 </style>
 </head>
 <body>
@@ -99,11 +105,14 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
  <a href="/?range=day" class="{cls_day}">суточный</a>
 </div>
 <div class="graphs">
+{legend}
 {graphs}
 </div>
 </body>
 </html>
 """
+
+LEGEND_TEMPLATE = u"""<div class="legend"><span class="sw"></span>{label}</div>"""
 
 GRAPH_TEMPLATE = u"""<div class="graph">
 <h2>{title}</h2>
@@ -162,11 +171,23 @@ def _format_time(oDt, sRange):
     return oDt.strftime("%H:%M")
 
 
-def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange):
+def ventilation_lines(oRef):
+    """Метки времени проветривания за день oRef (datetime).
+
+    Возвращает список datetime для VENTILATION_TIMES в тот же день.
+    Графики помечают эти моменты вертикальными пунктирными линиями."""
+    return [oRef.replace(hour=nH, minute=nM, second=0, microsecond=0)
+            for nH, nM in VENTILATION_TIMES]
+
+
+def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
+                 aVerticals=None):
     """SVG-график одной величины из строк read_recent.
 
     aRows — список (datetime, co2, temp, rh); nValueIndex — индекс величины;
-    sValueFormat — fmt для меток значений (например '.0f' для CO2)."""
+    sValueFormat — fmt для меток значений (например '.0f' для CO2);
+    aVerticals — необязательные временные отметки (datetime) для
+    вертикальных пунктирных линий (проветривание)."""
     if len(aRows) < 2:
         return GRAPH_TEMPLATE.format(
             title=sTitle, body='<div class="empty">нет данных за период</div>')
@@ -197,6 +218,29 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange):
     sLine = "<polyline fill=\"none\" stroke=\"{0}\" stroke-width=\"1.5\" " \
             "points=\"{1}\"/>".format(sColor, " ".join(aPts))
 
+    # Маркеры точек: кружки на линии, не чаще одной точки на 60 отсчётов,
+    # чтобы суточный график (1440 точек) не сливался в сплошное пятно.
+    nStep = max(1, len(aRows) // 60)
+    sMarks = ""
+    for nIndex in range(0, len(aRows), nStep):
+        oRow = aRows[nIndex]
+        sMarks += '<circle cx="{0:.1f}" cy="{1:.1f}" r="2.2" fill="{2}"/>'.format(
+            fX(oRow[0]), fY(oRow[nValueIndex]), sColor)
+    if (len(aRows) - 1) % nStep != 0:       # последняя (самая свежая) точка
+        oRow = aRows[-1]
+        sMarks += '<circle cx="{0:.1f}" cy="{1:.1f}" r="2.2" fill="{2}"/>'.format(
+            fX(oRow[0]), fY(oRow[nValueIndex]), sColor)
+
+    # Вертикальные пунктирные линии проветривания, попавшие в окно графика.
+    sVerticals = ""
+    if aVerticals:
+        for oDt in aVerticals:
+            if oT0 <= oDt <= oT1:
+                dX = fX(oDt)
+                sVerticals += '<line x1="{0:.1f}" y1="{1}" x2="{0:.1f}" y2="{2}" ' \
+                              'stroke="#b0bec5" stroke-width="1" ' \
+                              'stroke-dasharray="4,3"/>'.format(dX, dY0, dY1)
+
     # Метки времени (5 шт) и значений (3 шт).
     sLabels = ""
     for nIndex in range(5):
@@ -209,33 +253,39 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange):
 
     sTitle += " · {0} — {1}".format(_format_time(oT0, sRange), _format_time(oT1, sRange))
     sSvg = ('<svg viewBox="0 0 {0} {1}" preserveAspectRatio="xMidYMid meet" '
-            'xmlns="http://www.w3.org/2000/svg">{2}{3}</svg>').format(
-        SVG_WIDTH, SVG_HEIGHT, sLine, sLabels)
+            'xmlns="http://www.w3.org/2000/svg">{2}{3}{4}{5}</svg>').format(
+        SVG_WIDTH, SVG_HEIGHT, sVerticals, sLine, sMarks, sLabels)
     return GRAPH_TEMPLATE.format(title=sTitle, body=sSvg)
 
 
-def render_graphs(aRows, sRange):
+def render_graphs(aRows, sRange, aVerticals=None):
     """Три SVG-графика (CO2, температура, влажность) для страницы."""
-    sCo2 = render_graph("CO₂, ppm", aRows, 1, GRAPH_CO2_COLOR, ".0f", sRange)
-    sTemp = render_graph("Температура, °C", aRows, 2, GRAPH_TEMP_COLOR, ".1f", sRange)
-    sRh = render_graph("Влажность, %", aRows, 3, GRAPH_RH_COLOR, ".1f", sRange)
+    sCo2 = render_graph("CO₂, ppm", aRows, 1, GRAPH_CO2_COLOR, ".0f", sRange, aVerticals)
+    sTemp = render_graph("Температура, °C", aRows, 2, GRAPH_TEMP_COLOR, ".1f", sRange,
+                         aVerticals)
+    sRh = render_graph("Влажность, %", aRows, 3, GRAPH_RH_COLOR, ".1f", sRange,
+                       aVerticals)
     return sCo2 + sTemp + sRh
 
 
 # -- Страница ---------------------------------------------------------------
 
 
-def format_page(oSnapshot=None, sRange="hour", sDataDir=None):
+def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
     """Собирает HTML-страницу.
 
     Параметры:
         oSnapshot — dict с ключами co2/temperature/humidity/connected/time
             (как отдаёт колбек владельца) или None;
         sRange — 'hour' | 'day' — период графиков;
-        sDataDir — каталог CSV-файлов данных (None — графики пустые).
+        sDataDir — каталог CSV-файлов данных (None — графики пустые);
+        oWhen — момент "сейчас" (datetime) для вертикалей проветривания;
+            по умолчанию — текущее время.
     Возвращает bytes (UTF-8)."""
     if sRange not in RANGES:
         sRange = "hour"
+    if oWhen is None:
+        oWhen = datetime.now()
     if oSnapshot is None:
         sCo2 = "—"
         sClass = "co2_g"
@@ -253,7 +303,18 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None):
     aRows = []
     if sDataDir:
         aRows = read_recent(sDataDir, RANGE_HOURS[sRange])
-    sGraphs = render_graphs(aRows, sRange) if aRows else _empty_graphs()
+
+    # Вертикальные линии проветривания: только если попали в окно графика.
+    aVerticals = ventilation_lines(oWhen)
+    sLegend = ""
+    bVerticalVisible = False
+    if aRows:
+        oT0 = aRows[0][0]
+        oT1 = aRows[-1][0]
+        bVerticalVisible = any(oT0 <= oDt <= oT1 for oDt in aVerticals)
+    if bVerticalVisible:
+        sLegend = LEGEND_TEMPLATE.format(label=VENTILATION_LABEL)
+    sGraphs = render_graphs(aRows, sRange, aVerticals) if aRows else _empty_graphs()
 
     return PAGE_TEMPLATE.format(
         refresh=REFRESH_SECONDS,
@@ -267,6 +328,7 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None):
         status=sStatus,
         cls_hour="active" if sRange == "hour" else "",
         cls_day="active" if sRange == "day" else "",
+        legend=sLegend,
         graphs=sGraphs,
         svgw=SVG_WIDTH,
     ).encode("utf-8")
