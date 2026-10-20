@@ -23,7 +23,7 @@ from datetime import datetime
 
 from PyQt5.QtCore import QRectF, QTimer, Qt, QUrl
 from PyQt5.QtGui import (QColor, QDesktopServices, QGuiApplication, QIcon,
-                         QPainter, QPen, QPixmap)
+                         QLinearGradient, QPainter, QPen, QPixmap)
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
@@ -39,9 +39,13 @@ PANEL_SAMPLE_Y = 18
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 # Цветовые пороги CO2 (стандартная шкала: зелёный/жёлтый/красный).
-CO2_GREEN = QColor("#00c853")
-CO2_YELLOW = QColor("#ffd600")
-CO2_RED = QColor("#ff2d00")
+# Палитра — Material Design 400/600: светлая сверху, основная снизу.
+CO2_GREEN = QColor("#43a047")         # Green 600
+CO2_YELLOW = QColor("#ffb300")        # Amber 600
+CO2_RED = QColor("#e53935")           # Red 600
+CO2_GREEN_LIGHT = QColor("#66bb6a")   # Green 400
+CO2_YELLOW_LIGHT = QColor("#ffca28")  # Amber 400
+CO2_RED_LIGHT = QColor("#ef5350")     # Red 400
 CO2_WARN_HI = 1200
 CO2_WARN_LO = 800
 
@@ -279,12 +283,22 @@ def computeClockTextColor(oBackground):
 
 
 def co2Color(nPpm):
-    """Цвет линии CO2 по уровню: зелёный < 800, жёлтый 800–1200, красный > 1200."""
+    """Основной цвет CO2 (Material 600) по уровню: зелёный < 800,
+    жёлтый 800–1200, красный > 1200."""
     if nPpm >= CO2_WARN_HI:
         return QColor(CO2_RED)
     if nPpm >= CO2_WARN_LO:
         return QColor(CO2_YELLOW)
     return QColor(CO2_GREEN)
+
+
+def co2Colors(nPpm):
+    """Пара цветов Material (400 сверху, 600 снизу) для заливки иконки."""
+    if nPpm >= CO2_WARN_HI:
+        return QColor(CO2_RED_LIGHT), QColor(CO2_RED)
+    if nPpm >= CO2_WARN_LO:
+        return QColor(CO2_YELLOW_LIGHT), QColor(CO2_YELLOW)
+    return QColor(CO2_GREEN_LIGHT), QColor(CO2_GREEN)
 
 
 def badgeTextColor(oBg):
@@ -372,12 +386,13 @@ class HT2000TrayMonitor(object):
                 sTip = "HT2000: нет связи {0} мин".format(nOffMin)
             else:
                 sTip = "HT2000: нет связи"
-            oCo2Color = oAccent
+            oTopColor = oAccent
+            oBottomColor = oAccent
             sValue = None
         else:
             sTip = "CO2: {0:d} ppm\n{1}".format(
                 oData.co2, comfort_tooltip(oData.temperature, oData.humidity))
-            oCo2Color = co2Color(oData.co2)
+            oTopColor, oBottomColor = co2Colors(oData.co2)
             sValue = "{0:d}".format(oData.co2)
             self._warnIfNeeded(oData.co2)
         if self.bLogPaused:
@@ -388,7 +403,7 @@ class HT2000TrayMonitor(object):
 
         self.pTray.setToolTip(sTip)
         self.pTray.setIcon(QIcon(self._renderIcon(
-            oBg, oCo2Color, sValue, self._bFlash)))
+            oBg, oTopColor, oBottomColor, sValue, self._bFlash)))
 
     # -- Веб-сервер -------------------------------------------------------
 
@@ -466,21 +481,40 @@ class HT2000TrayMonitor(object):
             self.oWeb.stop()
             self.aWeb.setText("Сервер: выкл")
 
-    def _renderIcon(self, oBg, oCo2Color, sValue=None, bFlash=False):
+    def _renderIcon(self, oBg, oTopColor, oBottomColor, sValue=None, bFlash=False):
+        # Иконка в стиле Material Design: скруглённая карточка с тенью
+        # (elevation ~2dp), градиентная заливка уровня CO2 (400 сверху,
+        # 600 снизу) и крупное значение по центру.
+        nRadius = ICON_SIZE // 5
         pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
-        pixmap.fill(oBg)
+        pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        # Без графика: вся иконка заливается цветом уровня CO2, по центру —
-        # крупное значение. Цвет оставляет смысловую окраску (зелёный/жёлтый/
-        # красный), число — точное значение.
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+
+        # Тень под карточкой: сдвиг вниз на 2px, полупрозрачный чёрный.
+        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.drawRoundedRect(QRectF(1, 3, ICON_SIZE - 2, ICON_SIZE - 2),
+                                nRadius, nRadius)
+        # Подложка-карточка цветом панели.
+        painter.setBrush(oBg)
+        painter.drawRoundedRect(QRectF(0, 0, ICON_SIZE, ICON_SIZE),
+                                nRadius, nRadius)
         if sValue is not None:
-            painter.fillRect(QRectF(0, 0, ICON_SIZE, ICON_SIZE), oCo2Color)
+            # Плашка уровня CO2 с вертикальным градиентом Material.
+            oGrad = QLinearGradient(0, 0, 0, ICON_SIZE)
+            oGrad.setColorAt(0.0, oTopColor)
+            oGrad.setColorAt(1.0, oBottomColor)
+            painter.setBrush(oGrad)
+            painter.drawRoundedRect(
+                QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN,
+                       ICON_SIZE - 2 * MARGIN),
+                nRadius - 2, nRadius - 2)
             oFont = painter.font()
             oFont.setPixelSize(22)
             oFont.setBold(True)
             painter.setFont(oFont)
-            painter.setPen(QPen(badgeTextColor(oCo2Color)))
+            painter.setPen(QPen(badgeTextColor(oBottomColor)))
             painter.drawText(QRectF(MARGIN, 0, ICON_SIZE - 2 * MARGIN, ICON_SIZE),
                              Qt.AlignHCenter | Qt.AlignVCenter, sValue)
         if bFlash:
