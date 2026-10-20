@@ -916,6 +916,13 @@ def local_ip_addresses():
     return aAddrs or ["127.0.0.1"]
 
 
+def lan_web_addresses(nPort):
+    """URL веб-сервера для компьютеров локальной сети: http://<ip>:<port>/.
+
+    Адреса берутся из local_ip_addresses(); пустой список — если сети нет."""
+    return ["http://{0}:{1}/".format(sIp, nPort) for sIp in local_ip_addresses()]
+
+
 class HT2000WebError(Exception):
     """Ошибка запуска веб-сервера (все порты заняты и т.п.)."""
 

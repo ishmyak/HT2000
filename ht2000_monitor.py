@@ -27,7 +27,8 @@ from PyQt5.QtGui import (QColor, QDesktopServices, QGuiApplication, QIcon,
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
-from ht2000_web import HT2000WebError, HT2000WebServer, local_ip_addresses
+from ht2000_web import (HT2000WebError, HT2000WebServer, START_PORT,
+                        lan_web_addresses, local_ip_addresses)
 from comfort import comfort_tooltip, configure_from_file
 
 ICON_SIZE = 64
@@ -312,6 +313,8 @@ class HT2000TrayMonitor(object):
         menu = QMenu()
         self.aOpenWeb = menu.addAction("Открыть веб-страницу")
         self.aOpenWeb.triggered.connect(self._openWeb)
+        self.aCopyAddr = menu.addAction("Скопировать адрес веб-сервера")
+        self.aCopyAddr.triggered.connect(self._copyWebAddress)
         self.aWeb = menu.addAction("Сервер: выкл")
         self.aWeb.setCheckable(True)
         self.aWeb.toggled.connect(self._onWebToggled)
@@ -436,6 +439,16 @@ class HT2000TrayMonitor(object):
 
     def _onPauseToggled(self, bPaused):
         self.bLogPaused = bPaused
+
+    def _copyWebAddress(self):
+        """Копирование в буфер обмена адреса веб-сервера для LAN.
+
+        Если сервер запущен — его фактический порт, иначе первый порт из
+        диапазона, который будет использован при включении."""
+        nPort = self.oWeb.nPort if self.oWeb.is_running() else START_PORT
+        aAddrs = lan_web_addresses(nPort)
+        if aAddrs:
+            QApplication.clipboard().setText(aAddrs[0])
 
     def _onWebToggled(self, bChecked):
         if bChecked:

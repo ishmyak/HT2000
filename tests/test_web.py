@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ht2000_web import (HT2000WebError, HT2000WebServer, comfort_badge,
                         format_json, format_page, graphs_fragment,
-                        read_recent, render_graph, render_graphs,
-                        snapshot_with_comfort, ventilation_lines)
+                        lan_web_addresses, read_recent, render_graph,
+                        render_graphs, snapshot_with_comfort, ventilation_lines)
 
 SNAPSHOT = {
     "co2": 737,
@@ -150,6 +150,25 @@ class TestFormatPage(unittest.TestCase):
     def test_format_json(self):
         oData = json.loads(format_json(SNAPSHOT).decode("utf-8"))
         self.assertEqual(oData["co2"], 737)
+
+
+class TestLanAddresses(unittest.TestCase):
+    """URL веб-сервера для локальной сети."""
+
+    def test_lan_web_addresses_format(self):
+        aAddrs = lan_web_addresses(8080)
+        for sUrl in aAddrs:
+            self.assertRegex(sUrl, r"^http://\d{1,3}(\.\d{1,3}){3}:8080/$")
+        self.assertTrue(aAddrs)
+
+    def test_lan_web_addresses_no_loopback(self):
+        # Петлевые адреса для других компьютеров бесполезны — их быть не должно.
+        for sUrl in lan_web_addresses(8085):
+            self.assertNotIn("127.0.0.1", sUrl)
+
+    def test_lan_web_addresses_port(self):
+        aAddrs = lan_web_addresses(8090)
+        self.assertTrue(all(sUrl.endswith(":8090/") for sUrl in aAddrs))
 
 
 class TestReadCsv(unittest.TestCase):
