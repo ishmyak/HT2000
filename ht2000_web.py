@@ -11,11 +11,11 @@
 - `/graphs?range=...` — фрагмент графиков в JSON (для фонового обновления).
 
 Возможности страницы: тёмная тема (локально сохраняется), favicon по цвету
-CO2, индикатор «данные N минут назад», линия «сейчас», синхронный crosshair
-(тултип с временем и значением точки сразу на всех трёх графиках), под
-графиками — сводка мин/сред/макс, вертикальные линии проветривания
-(11:00, 13:00, 14:30, 16:00) с подсветкой интервала после проветривания
-и легендой.
+CO2, индикатор «данные N минут назад», синхронный crosshair (тултип с
+временем и значением точки сразу на всех трёх графиках), под графиками —
+сводка мин/сред/макс, вертикальные линии проветривания (8:00, 11:00, 13:00,
+14:30, 16:00) с подсветкой интервала после проветривания и легендой,
+кнопка ▲ для перестановки графиков (поднять нижний наверх и расширить).
 
 Сервер стартует в отдельном фоновом потоке (daemon), слушает все интерфейсы
 (0.0.0.0) на первом свободном порту из диапазона 8080..8089. Снимок текущих
@@ -49,11 +49,11 @@ SSE_GRAPHS_SECONDS = 5.0
 # Слушаем все интерфейсы, чтобы страница была доступна по локальной сети.
 BIND_ADDRESS = "0.0.0.0"
 
-RANGES = ("hour", "day", "week")
-RANGE_HOURS = {"hour": 1, "day": 24, "week": 24 * 7}
+RANGES = ("hour", "quarter", "day", "week")
+RANGE_HOURS = {"hour": 1, "quarter": 4, "day": 24, "week": 24 * 7}
 
 # Время проветривания: вертикальные линии на графиках (часы, минуты).
-VENTILATION_TIMES = ((11, 0), (13, 0), (14, 30), (16, 0))
+VENTILATION_TIMES = ((8, 0), (11, 0), (13, 0), (14, 30), (16, 0))
 VENTILATION_LABEL = "проветривание"
 VENTILATION_INTERVAL_MIN = 15       # подсветка интервала после проветривания
 
@@ -66,15 +66,13 @@ CO2_COLOR_RED = "#ff2d00"
 GRAPH_CO2_COLOR = "#1565c0"
 GRAPH_TEMP_COLOR = "#ef6c00"
 GRAPH_RH_COLOR = "#2e7d32"
+# Цвет вертикальных пунктирных линий проветривания на графиках.
 NOW_LINE_COLOR = "#90a4ae"
 VENT_FILL = "rgba(144,164,174,0.16)"
 # Зоны нормы (см. comfort.py) на графиках температуры и влажности:
 # допустимая — бледная, оптимальная — ярче.
 BAND_FILL = "rgba(46,125,50,0.12)"
 BAND_ACC_FILL = "rgba(46,125,50,0.05)"
-# Линия «сейчас» рисуется, пока данные не старше этого допуска
-# (запись идёт раз в минуту, обрыв/пауза ~10 минут не гасят линию).
-NOW_LINE_TOLERANCE_MIN = 10
 
 # SVG-геометрия графиков. Значения X0/Y0/Y1 должны совпадать с JS на странице.
 SVG_WIDTH = 640
@@ -128,11 +126,16 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
  .range a{{color:var(--link);text-decoration:none;padding:6px 20px;
         border-radius:999px;font-size:13px}}
  .range a.active{{background:var(--link);color:#fff;font-weight:650}}
- .graphs{{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}}
- .graph{{background:var(--card);border-radius:16px;padding:14px 16px 10px;
-       box-shadow:0 2px 12px var(--shadow);text-align:left}}
- .g-co2{{grid-column:1 / -1}}
- .graph h2{{font-size:13px;color:var(--h2);margin:0 0 6px;font-weight:650}}
+.graphs{{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}}
+  .graph{{background:var(--card);border-radius:16px;padding:14px 16px 10px;
+        box-shadow:0 2px 12px var(--shadow);text-align:left;position:relative}}
+  .g-wide{{grid-column:1 / -1}}
+  .graph h2{{font-size:13px;color:var(--h2);margin:0 0 6px;font-weight:650;
+        padding-right:26px}}
+  .gh-up{{position:absolute;top:10px;right:10px;border:1px solid var(--line);
+        background:var(--card);color:var(--muted);font-size:11px;line-height:1;
+        cursor:pointer;border-radius:6px;padding:4px 6px}}
+  .gh-up:hover{{color:var(--link);border-color:var(--link)}}
  .graph svg{{width:100%;height:auto;display:block}}
  .graph text{{font-family:inherit;font-size:10px;fill:var(--muted)}}
  .graph .empty{{color:var(--muted);font-size:13px;padding:30px 0;text-align:center}}
@@ -178,11 +181,12 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
    <div class="note" id="ht-hum-range">{hum_range}</div>
   </div>
  </div>
- <div class="range">
-  <a href="/?range=hour" class="{cls_hour}">час</a>
-  <a href="/?range=day" class="{cls_day}">сутки</a>
-  <a href="/?range=week" class="{cls_week}">неделя</a>
- </div>
+<div class="range">
+   <a href="/?range=hour" class="{cls_hour}">час</a>
+   <a href="/?range=quarter" class="{cls_quarter}">4 часа</a>
+   <a href="/?range=day" class="{cls_day}">сутки</a>
+   <a href="/?range=week" class="{cls_week}">неделя</a>
+  </div>
  <div class="graphs" id="ht-graphs">
  {legend}
  {graphs}
@@ -197,7 +201,7 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
   var tip = document.getElementById('ht-tip');
   var graphs = document.getElementById('ht-graphs');
   var m = location.search.match(/range=([a-z]+)/);
-  var range = (m && ['hour','day','week'].indexOf(m[1]) >= 0) ? m[1] : 'hour';
+  var range = (m && ['hour','quarter','day','week'].indexOf(m[1]) >= 0) ? m[1] : 'hour';
 
   /* Тёмная тема */
   function applyTheme(dark){{
@@ -298,12 +302,68 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
   }}
 
   function initGraphs(){{
+    initReorder();
     var all = graphs.querySelectorAll('svg[data-pts]');
     for (var i = 0; i < all.length; i++) {{
       all[i].addEventListener('mousemove', onMove);
       all[i].addEventListener('mouseleave', clearCross);
     }}
     graphs.addEventListener('mouseleave', clearCross);
+  }}
+
+  /* Перестановка графиков: верхняя карточка — на всю ширину, две нижние —
+     рядом. Стрелка ▲ на карточке поднимает её наверх и растягивает; бывший
+     верхний график опускается на её прежнее место. Порядок хранится локально
+     (переживает SSE-обновления и перезагрузку страницы). */
+  var topGraph = null;
+  var svTop = null;
+  try {{ svTop = localStorage.getItem('ht2000_top'); }} catch(e) {{}}
+  if (svTop && ['g-co2','g-temp','g-rh'].indexOf(svTop) >= 0) topGraph = svTop;
+
+  function promoKey(card){{
+    return card.classList.contains('g-temp') ? 'g-temp' :
+           card.classList.contains('g-rh') ? 'g-rh' : 'g-co2';
+  }}
+
+  /* Выставить одну полную ширину верхней карточке + скрыть её стрелку. */
+  function applyGraphTop(){{
+    var cards = graphs.querySelectorAll('.graph');
+    for (var i = 0; i < cards.length; i++) cards[i].classList.remove('g-wide');
+    if (cards.length) cards[0].classList.add('g-wide');
+    for (var i = 0; i < cards.length; i++) {{
+      var btn = cards[i].querySelector('.gh-up');
+      if (btn) btn.style.visibility = (i === 0) ? 'hidden' : 'visible';
+    }}
+  }}
+
+  /* Применить сохранённый порядок после подмены граф-секции (SSE/начало). */
+  function restoreGraphOrder(){{
+    if (!topGraph) {{ applyGraphTop(); return; }}
+    var cards = graphs.querySelectorAll('.graph');
+    for (var i = 0; i < cards.length; i++) {{
+      if (cards[i].classList.contains(topGraph)) {{
+        if (i !== 0) graphs.insertBefore(cards[i], cards[0]);
+        break;
+      }}
+    }}
+    applyGraphTop();
+  }}
+
+  function promoteGraph(btn){{
+    var card = btn.closest('.graph');
+    if (!card || card === graphs.querySelector('.graph')) return; // уже наверху
+    topGraph = promoKey(card);
+    try {{ localStorage.setItem('ht2000_top', topGraph); }} catch(e) {{}}
+    restoreGraphOrder();
+  }}
+
+  /* Привязать стрелки перестановки после каждой подмены граф-секции. */
+  function initReorder(){{
+    var btns = graphs.querySelectorAll('.gh-up');
+    for (var i = 0; i < btns.length; i++) {{
+      btns[i].addEventListener('click', function(){{ promoteGraph(this); }});
+    }}
+    restoreGraphOrder();
   }}
 
   /* Обновление по SSE: сервер сам пушит события snapshot (1 с) и
@@ -403,7 +463,7 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
 """
 
 GRAPH_TEMPLATE = u"""<div class="graph{cls}">
-<h2>{title}</h2>
+<h2>{title}<button class="gh-up" type="button" title="поднять график вверх">▲</button></h2>
 {body}
 <div class="stats">{stats}</div>
 </div>"""
@@ -447,24 +507,23 @@ def read_recent(sDataDir, nHoursBack):
 
 
 def _format_time(oDt, sRange):
-    """Метка времени на оси: часы для 'hour', с датой для 'day'/'week'."""
-    if sRange == "hour":
+    """Метка времени на оси: часы для 'hour'/'quarter', с датой для 'day'/'week'."""
+    if sRange in ("hour", "quarter"):
         return oDt.strftime("%H:%M")
     return oDt.strftime("%d.%m %H:%M")
 
 
 def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
-                 aVerticals=None, oNow=None, oNowLabel=None,
-                 aBand=None, aBandAcc=None, sCls=""):
+                 aVerticals=None, aBand=None, aBandAcc=None, sCls=""):
     """SVG-график одной величины из строк read_recent.
 
     aRows — список (datetime, co2, temp, rh); nValueIndex — индекс величины;
     aVerticals — временные отметки (datetime) проветривания: вертикальные
     пунктирные линии + подсветка интервала после каждой;
-    oNow — момент "сейчас": вертикальная линия, если попал в окно графика;
     aBand — оптимальная зона нормы (нижняя, верхняя) в единицах величины;
     aBandAcc — допустимая зона нормы (бледная полоса позади оптимальной);
-    sCls — дополнительный CSS-класс карточки графика (g-co2/g-temp/g-rh).
+    sCls — дополнительный CSS-класс карточки графика (g-co2/g-temp/g-rh;
+    g-wide — на всю ширину для верхней карточки).
     Зоны — по comfort.py."""
     if len(aRows) < 2:
         return GRAPH_TEMPLATE.format(
@@ -529,18 +588,6 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
     sLine = "<polyline fill=\"none\" stroke=\"{0}\" stroke-width=\"1.5\" " \
             "points=\"{1}\"/>".format(sColor, " ".join(aPts))
 
-    # Маркеры точек: не чаще одной точки на 60 отсчётов.
-    nStep = max(1, len(aRows) // 60)
-    sMarks = ""
-    for nIndex in range(0, len(aRows), nStep):
-        oRow = aRows[nIndex]
-        sMarks += '<circle cx="{0:.1f}" cy="{1:.1f}" r="2.2" fill="{2}"/>'.format(
-            fX(oRow[0]), fY(oRow[nValueIndex]), sColor)
-    if (len(aRows) - 1) % nStep != 0:
-        oRow = aRows[-1]
-        sMarks += '<circle cx="{0:.1f}" cy="{1:.1f}" r="2.2" fill="{2}"/>'.format(
-            fX(oRow[0]), fY(oRow[nValueIndex]), sColor)
-
     # Вертикальные линии проветривания.
     sVerticals = ""
     if aVerticals:
@@ -551,16 +598,6 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
                               'stroke="{3}" stroke-width="1" ' \
                               'stroke-dasharray="4,3"/>'.format(
                     dX, dY0, dY1, NOW_LINE_COLOR)
-
-    # Линия «сейчас».
-    sNow = ""
-    if oNow is not None and oT0 <= oNow \
-            and (oNow - oT1).total_seconds() <= NOW_LINE_TOLERANCE_MIN * 60:
-        dX = fX(oNow)
-        sNow = '<line x1="{0:.1f}" y1="{1}" x2="{0:.1f}" y2="{2}" ' \
-               'stroke="{3}" stroke-width="1.5"/>'.format(dX, dY0, dY1, NOW_LINE_COLOR)
-        sNow += '<text x="{0:.1f}" y="{1}" text-anchor="middle">{2}</text>'.format(
-            dX, SVG_TOP + 12, oNowLabel or "сейчас")
 
     aData = []
     for oRow in aRows:
@@ -581,9 +618,9 @@ def render_graph(sTitle, aRows, nValueIndex, sColor, sValueFormat, sRange,
 
     sTitle += " · {0} — {1}".format(_format_time(oT0, sRange), _format_time(oT1, sRange))
     sSvg = ('<svg viewBox="0 0 {0} {1}" preserveAspectRatio="xMidYMid meet" '
-            'xmlns="http://www.w3.org/2000/svg"{6}>{2}{3}{4}{5}{7}</svg>').format(
-        SVG_WIDTH, SVG_HEIGHT, sBand + sVentRects, sVerticals, sNow, sLine,
-        sDataAttr, sMarks + sLabels)
+            'xmlns="http://www.w3.org/2000/svg"{5}>{2}{3}{4}{6}</svg>').format(
+        SVG_WIDTH, SVG_HEIGHT, sBand + sVentRects, sVerticals, sLine,
+        sDataAttr, sLabels)
     sStats = "мин {0} · сред {1} · макс {2}".format(
         ("{0:" + sValueFormat + "}").format(min(aVals)),
         ("{0:" + sValueFormat + "}").format(dAvg),
@@ -609,14 +646,14 @@ def render_graphs(aRows, sRange, aVerticals=None, oNow=None):
     if oNow is None:
         oNow = datetime.now()
     sCo2 = render_graph("CO₂, ppm", aRows, 1, GRAPH_CO2_COLOR, ".0f", sRange,
-                        aVerticals, oNow, sCls="g-co2")
+                        aVerticals, sCls="g-co2 g-wide")
     oTOpt, oTAcc = temperature_ranges(oNow)
     sTemp = render_graph("Температура, °C", aRows, 2, GRAPH_TEMP_COLOR, ".1f",
-                         sRange, aVerticals, oNow,
+                         sRange, aVerticals,
                          aBand=oTOpt, aBandAcc=oTAcc, sCls="g-temp")
     oHOpt, oHAcc = humidity_ranges(oNow)
     sRh = render_graph("Влажность, %", aRows, 3, GRAPH_RH_COLOR, ".1f",
-                       sRange, aVerticals, oNow,
+                       sRange, aVerticals,
                        aBand=oHOpt if oHOpt == oHAcc else oHAcc,
                        aBandAcc=None if oHOpt == oHAcc else oHOpt,
                        sCls="g-rh")
@@ -625,7 +662,7 @@ def render_graphs(aRows, sRange, aVerticals=None, oNow=None):
 
 def _empty_graphs():
     aEmpty = ""
-    for sTitle, sCls in (("CO₂, ppm", "g-co2"),
+    for sTitle, sCls in (("CO₂, ppm", "g-co2 g-wide"),
                          ("Температура, °C", "g-temp"),
                          ("Влажность, %", "g-rh")):
         aEmpty += GRAPH_TEMPLATE.format(
@@ -795,6 +832,7 @@ def format_page(oSnapshot=None, sRange="hour", sDataDir=None, oWhen=None):
         hum_range=sHumRng,
         status=sStatus,
         cls_hour="active" if sRange == "hour" else "",
+        cls_quarter="active" if sRange == "quarter" else "",
         cls_day="active" if sRange == "day" else "",
         cls_week="active" if sRange == "week" else "",
         legend="",

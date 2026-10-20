@@ -108,8 +108,25 @@ class TestFormatPage(unittest.TestCase):
     def test_range_links(self):
         sHtml = format_page(SNAPSHOT).decode("utf-8")
         self.assertIn('?range=hour', sHtml)
+        self.assertIn('?range=quarter', sHtml)          # режим 4 часа
         self.assertIn('?range=day', sHtml)
-        self.assertIn('?range=week', sHtml)                 # недельный диапазон
+        self.assertIn('?range=week', sHtml)             # недельный диапазон
+
+    def test_page_quarter_range_active(self):
+        sHtml = format_page(SNAPSHOT, sRange="quarter").decode("utf-8")
+        self.assertIn('href="/?range=quarter" class="active"', sHtml)
+        self.assertNotIn('href="/?range=hour" class="active"', sHtml)
+
+    def test_quarter_is_valid_render(self):
+        # «4 часа» — валидный диапазон: графики рендерятся без ошибок.
+        sHtml = format_page(SNAPSHOT, sRange="quarter").decode("utf-8")
+        self.assertIn("4 часа", sHtml)
+
+    def test_graph_up_button_present(self):
+        # Кнопка подъёма графика (стрелка ▲) есть на каждой карточке.
+        sHtml = format_page(SNAPSHOT, sRange="hour", sDataDir=None).decode("utf-8")
+        self.assertIn("gh-up", sHtml)
+        self.assertGreater(sHtml.count("gh-up"), 0)
 
     def test_invalid_range_falls_back_to_hour(self):
         sHtml = format_page(SNAPSHOT, sRange="invalid").decode("utf-8")
@@ -185,16 +202,11 @@ class TestGraphs(unittest.TestCase):
         self.assertIn("сред 702", sSvg)
         self.assertIn("макс 704", sSvg)
 
-    def test_render_graph_now_line(self):
-        oNow = self.aRows[2][0]             # внутри окна
-        sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour",
-                            oNow=oNow)
-        self.assertIn('stroke="#90a4ae"', sSvg)
-        self.assertIn("сейчас", sSvg)
-        # Вне окна линия «сейчас» не рисуется.
-        sSvg2 = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour",
-                             oNow=self.aRows[0][0] - timedelta(hours=5))
-        self.assertNotIn("сейчас", sSvg2)
+    def test_render_graph_no_now_line(self):
+        # Линия «сейчас» убрана по требованию пользователя.
+        sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
+        self.assertNotIn("сейчас", sSvg)
+        self.assertNotIn('stroke="#90a4ae"', sSvg)   # теперь только вертикали
 
     def test_render_graph_ventilation_interval_highlight(self):
         oAt = self.aRows[2][0]              # внутри окна
@@ -232,9 +244,11 @@ class TestGraphs(unittest.TestCase):
         self.assertGreaterEqual(sHtml.count("rgba(46,125,50,0.12)"), 2)
         self.assertGreaterEqual(sHtml.count("rgba(46,125,50,0.05)"), 1)
 
-    def test_render_graph_has_markers(self):
+    def test_render_graph_has_no_markers(self):
+        # По требованию точки на линиях графиков убраны (маркеров нет).
         sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
-        self.assertEqual(sSvg.count("<circle"), 5)   # все точки короткого ряда
+        self.assertEqual(sSvg.count("<circle"), 0)   # маркеров точек нет
+        self.assertIn("<polyline", sSvg)
 
     def test_render_graph_data_points_for_tooltip(self):
         sSvg = render_graph("CO2, ppm", self.aRows, 1, "#123", ".0f", "hour")
@@ -321,7 +335,7 @@ class TestGraphs(unittest.TestCase):
         oRef = datetime(2026, 10, 19, 17, 0, 0)
         aLines = ventilation_lines(oRef)
         self.assertEqual([(o.hour, o.minute) for o in aLines],
-                         [(11, 0), (13, 0), (14, 30), (16, 0)])
+                         [(8, 0), (11, 0), (13, 0), (14, 30), (16, 0)])
 
 
 class TestComfortBadge(unittest.TestCase):
