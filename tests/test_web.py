@@ -57,6 +57,18 @@ class TestFormatPage(unittest.TestCase):
         self.assertIn("30.1 %", sHtml)
         self.assertIn("обновлено: 2026-10-19 12:45:00", sHtml)
 
+    def test_page_status_label_has_no_relative_time(self):
+        # Требование: из лейбла «обновлено» убрано относительное время
+        # («N с/мин назад»); остаётся только абсолютная метка времени.
+        sHtml = format_page(SNAPSHOT).decode("utf-8")
+        # В JS-ветке подключения остаётся только абсолютное время.
+        self.assertIn("обновлено: ", sHtml)
+        self.assertIn("d.time.substring(0, 19)", sHtml)
+        # Относительное время больше не приклеивается к лейблу «обновлено».
+        self.assertNotIn("+ ' (' + fmtAge(age) + ')'", sHtml)
+        # Серверная подстановка тоже без относительного времени («назад»).
+        self.assertNotIn("обновлено: N мин назад", sHtml)
+
     def test_page_no_refresh_meta(self):
         # Обновление страницы — через JS (fetch), без перезагрузки.
         sHtml = format_page(SNAPSHOT).decode("utf-8")

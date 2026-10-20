@@ -4,11 +4,12 @@
 
 Данные берутся с CO2-монитора SLAB HT2000 (USB HID, см. ht2000_reader.py):
 
-- Одна иконка в трее: график CO2 (история 32 точки, обновление раз в секунду).
-  Линия красится по уровню: зелёный < 800 ppm, жёлтый 800–1200, красный > 1200.
+- Одна иконка в трее: вся заливается цветом уровня CO2 (зелёный < 800 ppm,
+  жёлтый 800–1200, красный > 1200), по центру — текущее значение в ppm.
+  Графика (истории) нет.
 - Температура и влажность показываются в хинте иконки (наведение мыши).
 - Цвета берутся с панели часов, как в trayinfo: цвет1 — фон панели (заливка
-  иконки), цвет2 — текст панели (акцент линий).
+  иконки), цвет2 — текст панели (акцент).
 - Раз в минуту текущие значения (дата, время, CO2, T, RH) пишутся в CSV-файл
   data/ht2000_YYYY-MM.csv в каталоге проекта.
 - Контекстное меню «Выход» на иконке.
@@ -21,8 +22,8 @@ import sys
 from datetime import datetime
 
 from PyQt5.QtCore import QRectF, QTimer, Qt, QUrl
-from PyQt5.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, QIcon,
-                         QPainter, QPainterPath, QPen, QPixmap)
+from PyQt5.QtGui import (QColor, QDesktopServices, QGuiApplication, QIcon,
+                         QPainter, QPen, QPixmap)
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
@@ -30,13 +31,9 @@ from ht2000_web import HT2000WebError, HT2000WebServer, local_ip_addresses
 from comfort import comfort_tooltip, configure_from_file
 
 ICON_SIZE = 64
-HISTORY = 32
 UPDATE_MS = 1000        # обновление иконоки
 MARGIN = 4
 PANEL_SAMPLE_Y = 18
-
-OUTLINE_RADIUS = 2
-FILL_ALPHA = 77
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -58,11 +55,6 @@ CLOCK_BG_TOLERANCE = 40
 
 PANEL_STRIP_H = 30
 PANEL_STRIP_STEP = 8
-CO2_MAX_SCALE = 3000    # шкала графика CO2, ppm
-# Нижняя полоса иконки: плашка-бейдж с числом CO2. 24px из 64, чтобы текст
-# (18px bold) оставался читаемым после масштабирования треем до ~22px.
-VALUE_AREA_H = 24
-BADGE_MARGIN = 2        # отступ плашки от края иконки
 
 # Порог первого уведомления CO2 (проветрите помещение).
 NOTIFY_CO2 = 800
@@ -311,7 +303,6 @@ class HT2000TrayMonitor(object):
         self.nWarnLevel = 0         # 0 — норма, 1 — жёлтый, 2 — красный
         self._bFlash = False        # фаза мигания «!» при потере связи
         self.bLogPaused = False     # «Пауза записи» в меню
-        self.co2History = [0.0] * HISTORY
         self.oReader = HT2000Reader()
         self.oLogger = HT2000Logger()
         self.oWeb = HT2000WebServer(self.snapshotForWeb, sDataDir=DATA_DIR)
@@ -362,14 +353,8 @@ class HT2000TrayMonitor(object):
         if self.oLastData is not None:
             oData = self.oLastData
 
-        if oData is None:
-            self.co2History.append(0.0)
-            del self.co2History[:-HISTORY]
-        else:
-            self.co2History.append(float(oData.co2))
-            del self.co2History[:-HISTORY]
-            if not self.bLogPaused:
-                self.oLogger.log(oData)
+        if oData is not None and not self.bLogPaused:
+            self.oLogger.log(oData)
 
         # Фаза мигания индикатора «!» при потере связи.
         self._bFlash = not self._bFlash if self.bConnected is False else False
@@ -377,7 +362,7 @@ class HT2000TrayMonitor(object):
         # Цвета берутся с панели часов (как trayinfo).
         oBg, oAccent = detectClockColors()
 
-        # Хинт иконки — все три параметра, в квадрате — график CO2.
+        # Хинт иконки — все три параметра; на иконке — цвет и значение CO2.
         if oData is None:
             if self.oLastTime is not None:
                 nOffMin = max(1, int((datetime.now() - self.oLastTime).total_seconds() // 60))
@@ -400,7 +385,7 @@ class HT2000TrayMonitor(object):
 
         self.pTray.setToolTip(sTip)
         self.pTray.setIcon(QIcon(self._renderIcon(
-            self.co2History, oBg, oCo2Color, sValue, self._bFlash)))
+            oBg, oCo2Color, sValue, self._bFlash)))
 
     # -- Веб-сервер -------------------------------------------------------
 
@@ -468,30 +453,23 @@ class HT2000TrayMonitor(object):
             self.oWeb.stop()
             self.aWeb.setText("Сервер: выкл")
 
-    def _renderIcon(self, values, oBg, oCo2Color, sValue=None, bFlash=False):
+    def _renderIcon(self, oBg, oCo2Color, sValue=None, bFlash=False):
         pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
         pixmap.fill(oBg)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        # График в верхней части, нижняя полоса — плашка-бейдж с числом CO2.
-        rect = QRectF(MARGIN, MARGIN, ICON_SIZE - 2 * MARGIN,
-                      ICON_SIZE - 2 * MARGIN - VALUE_AREA_H)
-        self._plot(painter, values, oCo2Color, rect)
+        # Без графика: вся иконка заливается цветом уровня CO2, по центру —
+        # крупное значение. Цвет оставляет смысловую окраску (зелёный/жёлтый/
+        # красный), число — точное значение.
         if sValue is not None:
-            # Плашка цвета уровня CO2: скруглённый прямоугольник почти на
-            # всю ширину иконки, по центру — крупное число контрастного цвета.
-            badge = QRectF(BADGE_MARGIN, ICON_SIZE - VALUE_AREA_H - BADGE_MARGIN,
-                           ICON_SIZE - 2 * BADGE_MARGIN,
-                           VALUE_AREA_H - 2 * BADGE_MARGIN)
-            path = QPainterPath()
-            path.addRoundedRect(badge, 4.0, 4.0)
-            painter.fillPath(path, oCo2Color)
+            painter.fillRect(QRectF(0, 0, ICON_SIZE, ICON_SIZE), oCo2Color)
             oFont = painter.font()
-            oFont.setPixelSize(18)
+            oFont.setPixelSize(22)
             oFont.setBold(True)
             painter.setFont(oFont)
             painter.setPen(QPen(badgeTextColor(oCo2Color)))
-            painter.drawText(badge, Qt.AlignHCenter | Qt.AlignVCenter, sValue)
+            painter.drawText(QRectF(MARGIN, 0, ICON_SIZE - 2 * MARGIN, ICON_SIZE),
+                             Qt.AlignHCenter | Qt.AlignVCenter, sValue)
         if bFlash:
             oFont = painter.font()
             oFont.setPixelSize(34)
@@ -502,33 +480,6 @@ class HT2000TrayMonitor(object):
                              Qt.AlignCenter, "!")
         painter.end()
         return pixmap
-
-    def _plot(self, painter, values, color, rect):
-        # Линия нормируется на шкалу CO2 0..3000 ppm.
-        n = len(values)
-        path = QPainterPath()
-        for i, value in enumerate(values):
-            x = rect.left() + i * (rect.width() / (n - 1))
-            y = rect.bottom() - min(value, CO2_MAX_SCALE) / CO2_MAX_SCALE * rect.height()
-            if i == 0:
-                path.moveTo(x, y)
-            else:
-                path.lineTo(x, y)
-
-        areaPath = QPainterPath(path)
-        areaPath.lineTo(rect.right(), rect.bottom())
-        areaPath.lineTo(rect.left(), rect.bottom())
-        areaPath.closeSubpath()
-        oFill = QColor(color)
-        oFill.setAlpha(FILL_ALPHA)
-        painter.fillPath(areaPath, oFill)
-
-        painter.setPen(QPen(color, 1))
-        painter.drawPath(path)
-
-        painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(color, 1))
-        painter.drawRoundedRect(rect, OUTLINE_RADIUS, OUTLINE_RADIUS)
 
 
 def main():

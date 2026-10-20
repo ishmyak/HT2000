@@ -410,7 +410,8 @@ PAGE_TEMPLATE = u"""<!DOCTYPE html>
     var st = document.getElementById('ht-status');
     var age = parseAge(d.time);
     if (d.connected && age !== null && age < 180000) {{
-      st.textContent = 'обновлено: ' + d.time.substring(0, 19).replace('T', ' ') + ' (' + fmtAge(age) + ')';
+      /* Абсолютное время, без относительного ("N мин назад"). */
+      st.textContent = 'обновлено: ' + d.time.substring(0, 19).replace('T', ' ');
       st.className = 'status';
     }} else if (age !== null) {{
       st.textContent = 'связь потеряна · данные ' + fmtAge(age);
