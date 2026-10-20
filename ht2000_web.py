@@ -1046,6 +1046,15 @@ class HT2000WebServer(object):
     def is_running(self):
         return self.httpd is not None
 
+    def connected_clients(self):
+        """Отсортированный список IP активных подключений (или пустой).
+
+        Пока веб-сервер выключен, список всегда пуст. Регистрация/снятие
+        клиентов выполняется в потоке обработчика запросов."""
+        if self.httpd is None:
+            return []
+        return self.httpd.connected_clients()
+
 
 class _HT2000Server(ThreadingHTTPServer):
     """ThreadingHTTPServer, несущий колбек снимка, каталог данных и кэш SSE."""
@@ -1055,7 +1064,40 @@ class _HT2000Server(ThreadingHTTPServer):
         self.fnSnapshot = fnSnapshot
         self.sDataDir = sDataDir
         self.oOwner = oOwner      # HT2000WebServer: _cache и _condition
+        # Число соединений на IP: несколько вкладок дают один пункт меню.
+        self._clientLock = threading.Lock()
+        self._clients = {}
         ThreadingHTTPServer.__init__(self, oAddress, oHandlerClass)
+
+    def process_request_thread(self, oRequest, oClientAddress):
+        """Учитывает клиента на всё время обработки TCP-соединения."""
+        sIp = oClientAddress[0]
+        self.register_client(sIp)
+        try:
+            super().process_request_thread(oRequest, oClientAddress)
+        finally:
+            self.unregister_client(sIp)
+
+    def register_client(self, sIp):
+        """Помечает IP клиента как активное подключение."""
+        if not sIp:
+            return
+        with self._clientLock:
+            self._clients[sIp] = self._clients.get(sIp, 0) + 1
+
+    def unregister_client(self, sIp):
+        """Снимает одно подключение IP клиента при разрыве соединения."""
+        with self._clientLock:
+            nConnections = self._clients.get(sIp, 0)
+            if nConnections > 1:
+                self._clients[sIp] = nConnections - 1
+            else:
+                self._clients.pop(sIp, None)
+
+    def connected_clients(self):
+        """Отсортированный список IP текущих клиентов сервера."""
+        with self._clientLock:
+            return sorted(self._clients)
 
 
 class _HT2000Handler(BaseHTTPRequestHandler):
@@ -1121,7 +1163,7 @@ class _HT2000Handler(BaseHTTPRequestHandler):
         nLastSnapshot = -1
         nLastGraphs = -1
         try:
-            while True:
+            while not oOwner._pushStop.is_set():
                 oGraphsVer, sGraphs = oCache["graphs"][sRange]
                 oSnapVer, oSnap = oCache["snapshot"]
                 if oSnapVer != nLastSnapshot:

@@ -13,7 +13,7 @@ NAME="ht2000_monitor.py"
 LOG="$PROJ/monitor.log"
 
 pidof_ht() {
-    pgrep -f "[h]t2000_monitor.py" | head -1
+    pgrep -of "[h]t2000_monitor[.]py([[:space:]]|$)"
 }
 
 do_start() {
@@ -25,7 +25,7 @@ do_start() {
     nohup python3 "$NAME" > "$LOG" 2>&1 &
     nPID=$!
     sleep 1
-    if kill -0 "$nPID" 2>/dev/null || [ -n "$(pidof_ht)" ]; then
+    if kill -0 "$nPID" 2>/dev/null; then
         echo "HT2000 запущен в фоне (PID=$nPID). Лог: $LOG"
     else
         echo "Ошибка: процесс завершился сразу. Смотрите лог: $LOG"
@@ -35,14 +35,14 @@ do_start() {
 
 do_stop() {
     if sPID="$(pidof_ht)"; then
-        kill "$sPID"
+        kill "$sPID" || return 1
         for _ in 1 2 3 4 5; do
             sPID="$(pidof_ht)" || break
             sleep 1
         done
         if sPID="$(pidof_ht)"; then
             echo "HT2000 (PID=$sPID) не завершился за 5 c — принудительно."
-            kill -9 "$sPID"
+            kill -9 "$sPID" || return 1
         else
             echo "HT2000 остановлен."
         fi
@@ -63,7 +63,7 @@ do_status() {
 case "${1:-start}" in
     start)   do_start ;;
     stop)    do_stop ;;
-    restart) do_stop; do_start ;;
+    restart) do_stop && do_start ;;
     status)  do_status ;;
     *) echo "Использование: $0 [start|stop|restart|status]"; exit 2 ;;
 esac

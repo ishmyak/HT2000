@@ -24,6 +24,7 @@ from datetime import datetime
 from PyQt5.QtCore import QRectF, QTimer, Qt, QUrl
 from PyQt5.QtGui import (QColor, QDesktopServices, QGuiApplication, QIcon,
                          QLinearGradient, QPainter, QPen, QPixmap)
+from PyQt5.QtNetwork import QHostInfo
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
@@ -338,6 +339,9 @@ class HT2000TrayMonitor(object):
         self.aOpenData = menu.addAction("Открыть папку данных")
         self.aOpenData.triggered.connect(self._openDataDir)
         menu.addSeparator()
+        self.pClientsMenu = menu.addMenu("Клиенты")
+        self.pClientsMenu.aboutToShow.connect(self._refreshClientsMenu)
+        menu.addSeparator()
         actExit = menu.addAction("Выход")
         actExit.triggered.connect(QApplication.instance().quit)
         self.pTray.setContextMenu(menu)
@@ -454,6 +458,31 @@ class HT2000TrayMonitor(object):
 
     def _onPauseToggled(self, bPaused):
         self.bLogPaused = bPaused
+
+    def _refreshClientsMenu(self):
+        """Показывает PTR-имена клиентов; выбор копирует исходный IP."""
+        self.pClientsMenu.clear()
+        aClients = self.oWeb.connected_clients()
+        if not aClients:
+            self.pClientsMenu.addAction("Нет подключённых клиентов").setEnabled(False)
+            return
+        for sIp in aClients:
+            actClient = self.pClientsMenu.addAction(sIp)
+            actClient.setData(sIp)
+            actClient.setToolTip(sIp)
+            actClient.triggered.connect(
+                lambda bChecked=False, sAddress=sIp:
+                QApplication.clipboard().setText(sAddress))
+            QHostInfo.lookupHost(sIp, lambda oHost, sAddress=sIp:
+                                 self._setClientHostName(sAddress, oHost))
+
+    def _setClientHostName(self, sIp, oHost):
+        """Обновляет имя после фонового PTR-запроса, если клиент ещё в меню."""
+        if oHost.error() != QHostInfo.NoError or not oHost.hostName():
+            return
+        for actClient in self.pClientsMenu.actions():
+            if actClient.data() == sIp:
+                actClient.setText(oHost.hostName())
 
     def _copyWebAddress(self):
         """Копирование в буфер обмена адреса веб-сервера для LAN.

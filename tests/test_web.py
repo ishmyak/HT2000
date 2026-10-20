@@ -3,10 +3,13 @@
 """Тесты HT2000 Web: HTML/JSON-ответы, поведение сервера, чтение CSV,
 SVG-графики и выбор диапазона."""
 
+import http.client
 import json
 import os
+import socket
 import sys
 import tempfile
+import time
 import urllib.request
 import urllib.error
 import unittest
@@ -475,6 +478,58 @@ class TestServer(unittest.TestCase):
             self.assertEqual(oData["rh_status"], "low")
         finally:
             self.oServer.stop()
+
+    def test_connected_clients_lifecycle(self):
+        """Две вкладки одного IP: адрес исчезает после закрытия последней."""
+        self.oServer = start_server()
+        aConnections = []
+        aResponses = []
+
+        def wait_clients(aExpected):
+            """Ждёт завершения обработчиков после закрытия соединения."""
+            dDeadline = time.monotonic() + 4
+            while time.monotonic() < dDeadline:
+                if self.oServer.connected_clients() == aExpected:
+                    return
+                time.sleep(0.02)
+            self.assertEqual(self.oServer.connected_clients(), aExpected)
+
+        try:
+            self.assertEqual(self.oServer.connected_clients(), [])
+            for nIndex in range(2):
+                oConnection = http.client.HTTPConnection(
+                    "127.0.0.1", self.oServer.nPort, timeout=5)
+                aConnections.append(oConnection)
+                oConnection.request("GET", "/events")
+                oResponse = oConnection.getresponse()
+                aResponses.append(oResponse)
+                self.assertEqual(oResponse.status, 200)
+                self.assertEqual(oResponse.readline(), b"event: snapshot\n")
+            self.assertEqual(self.oServer.connected_clients(), ["127.0.0.1"])
+            for nIndex in range(2):
+                aConnections[nIndex].sock.shutdown(socket.SHUT_RDWR)
+                aResponses[nIndex].close()
+                aConnections[nIndex].close()
+                if nIndex == 0:
+                    # Первый обработчик должен снять ровно одно соединение.
+                    dDeadline = time.monotonic() + 4
+                    while time.monotonic() < dDeadline:
+                        with self.oServer.httpd._clientLock:
+                            nCount = self.oServer.httpd._clients.get("127.0.0.1", 0)
+                        if nCount == 1:
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(nCount, 1)
+                    wait_clients(["127.0.0.1"])
+                else:
+                    wait_clients([])
+            self.oServer.stop()
+            self.assertEqual(self.oServer.connected_clients(), [])
+        finally:
+            for oResponse in aResponses:
+                oResponse.close()
+            for oConnection in aConnections:
+                oConnection.close()
 
     def test_events_endpoint(self):
         # SSE: text/event-stream; первое событие snapshot с JSON-снимком,
