@@ -10,14 +10,14 @@
 - Температура и влажность показываются в хинте иконки (наведение мыши).
 - Цвета берутся с панели часов, как в trayinfo: цвет1 — фон панели (заливка
   иконки), цвет2 — текст панели (акцент).
-- Раз в минуту текущие значения (дата, время, CO2, T, RH) пишутся в CSV-файл
-  data/ht2000_YYYY-MM.csv в каталоге проекта.
+- За каждую минуту медианы успешных чтений CO2, T, RH пишутся в CSV-файл
+  data/ht2000_YYYY-MM-DD.csv в каталоге проекта.
 - Контекстное меню «Выход» на иконке.
 - Если системный трей недоступен — сообщение в stderr и выход с кодом 1.
 """
 
-import csv
 import os
+import signal
 import sys
 from datetime import datetime
 
@@ -28,6 +28,7 @@ from PyQt5.QtNetwork import QHostInfo
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ht2000_reader import HT2000Error, HT2000Reader
+from ht2000_logger import HT2000Logger
 from ht2000_web import (HT2000WebError, HT2000WebServer, START_PORT,
                         lan_web_addresses, local_ip_addresses)
 from comfort import comfort_tooltip, configure_from_file
@@ -64,69 +65,6 @@ PANEL_STRIP_STEP = 8
 
 # Порог первого уведомления CO2 (проветрите помещение).
 NOTIFY_CO2 = 800
-
-
-class HT2000Logger(object):
-    """Пишет снимки в CSV-файл data/ht2000_YYYY-MM.csv (раз в минуту)."""
-
-    def __init__(self, dataDir=DATA_DIR):
-        self.dataDir = dataDir
-        self.sPath = None
-        self.oFile = None
-        self.oWriter = None
-        self.nLastMinute = None
-
-    def log(self, oData, oWhen=None):
-        """Пишет строку, если минута сменилась (или файл ещё не создан)."""
-        if oWhen is None:
-            oWhen = datetime.now()
-        nMinute = oWhen.year * 12 * 31 * 24 * 60 + oWhen.month * 31 * 24 * 60 \
-            + oWhen.day * 24 * 60 + oWhen.hour * 60 + oWhen.minute
-        if nMinute == self.nLastMinute:
-            return
-        self.nLastMinute = nMinute
-        self._ensure_file(oWhen)
-        if self.oWriter is None:
-            return
-        self.oWriter.writerow([
-            oWhen.strftime("%Y-%m-%d %H:%M:%S"),
-            "{0:d}".format(oData.co2),
-            "{0:.1f}".format(oData.temperature),
-            "{0:.1f}".format(oData.humidity),
-        ])
-        self.oFile.flush()
-
-    def _ensure_file(self, oWhen):
-        # Файл называется датой: новый день — новый файл, весь день — тот же.
-        sNewPath = os.path.join(
-            self.dataDir,
-            "ht2000_{0:04d}-{1:02d}-{2:02d}.csv".format(
-                oWhen.year, oWhen.month, oWhen.day))
-        if sNewPath == self.sPath:
-            return
-        self.close()
-        try:
-            os.makedirs(self.dataDir, exist_ok=True)
-            bNew = not os.path.exists(sNewPath)
-            self.oFile = open(sNewPath, "a", newline="")
-            self.oWriter = csv.writer(self.oFile, delimiter=";")
-            if bNew:
-                self.oWriter.writerow(["datetime", "co2_ppm", "temp_c", "rh_percent"])
-            self.sPath = sNewPath
-        except OSError as oExc:
-            sys.stderr.write("Ошибка записи лога {0}: {1}\n".format(sNewPath, oExc))
-            self.oFile = None
-            self.oWriter = None
-            self.sPath = None
-
-    def close(self):
-        if self.oFile is not None:
-            try:
-                self.oFile.close()
-            except OSError:
-                pass
-            self.oFile = None
-            self.oWriter = None
 
 
 def _sampleStrip(nY, oScreen):
@@ -368,14 +306,13 @@ class HT2000TrayMonitor(object):
                 self.oReader.close()
                 self.oReader.path = None     # при следующем тике — поиск заново
         self.bConnected = oData is not None
+        oNow = datetime.now()
+        self.oLogger.log(oData if not self.bLogPaused else None, oNow)
         if oData is not None:
             self.oLastData = oData
-            self.oLastTime = datetime.now()
+            self.oLastTime = oNow
         if self.oLastData is not None:
             oData = self.oLastData
-
-        if oData is not None and not self.bLogPaused:
-            self.oLogger.log(oData)
 
         # Фаза мигания индикатора «!» при потере связи.
         self._bFlash = not self._bFlash if self.bConnected is False else False
@@ -455,6 +392,13 @@ class HT2000TrayMonitor(object):
 
     def _openDataDir(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(DATA_DIR))
+
+    def close(self):
+        """Сохраняет последнюю минуту и освобождает ресурсы при выходе."""
+        self.pTimer.stop()
+        self.oLogger.close()
+        self.oReader.close()
+        self.oWeb.stop()
 
     def _onPauseToggled(self, bPaused):
         self.bLogPaused = bPaused
@@ -570,6 +514,9 @@ def main():
         return 1
 
     app._ht2000 = HT2000TrayMonitor()
+    app.aboutToQuit.connect(app._ht2000.close)
+    signal.signal(signal.SIGTERM, lambda nSignal, oFrame: app.quit())
+    signal.signal(signal.SIGINT, lambda nSignal, oFrame: app.quit())
     return app.exec_()
 
 
