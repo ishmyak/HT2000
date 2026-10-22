@@ -13,6 +13,7 @@ import time
 import urllib.request
 import urllib.error
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -346,8 +347,10 @@ class TestGraphs(unittest.TestCase):
                 sBody += "{0};{1};{2};{3}\n".format(
                     oDt.strftime("%Y-%m-%d %H:%M:%S"), 800, 26.0, 40.0)
             write_csv(sDir, sBody)
-            sHtml = format_page(SNAPSHOT, sRange="day", sDataDir=sDir,
-                                oWhen=oNow).decode("utf-8")
+            with patch("ht2000_web.datetime", wraps=datetime) as oClock:
+                oClock.now.return_value = oNow
+                sHtml = format_page(SNAPSHOT, sRange="day", sDataDir=sDir,
+                                    oWhen=oNow).decode("utf-8")
             self.assertIn("проветривание", sHtml)
             self.assertGreater(sHtml.count("<line x1="), 0)   # вертикали в SVG
 
@@ -360,8 +363,10 @@ class TestGraphs(unittest.TestCase):
                 sBody += "{0};{1};{2};{3}\n".format(
                     oDt.strftime("%Y-%m-%d %H:%M:%S"), 800, 26.0, 40.0)
             write_csv(sDir, sBody)
-            sHtml = format_page(SNAPSHOT, sRange="hour", sDataDir=sDir,
-                                oWhen=oNight).decode("utf-8")
+            with patch("ht2000_web.datetime", wraps=datetime) as oClock:
+                oClock.now.return_value = oNight
+                sHtml = format_page(SNAPSHOT, sRange="hour", sDataDir=sDir,
+                                    oWhen=oNight).decode("utf-8")
             self.assertNotIn("проветривание", sHtml)
             self.assertNotIn("<line x1=", sHtml)      # вертикалей в SVG нет
 
