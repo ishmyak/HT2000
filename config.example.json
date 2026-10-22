@@ -1,0 +1,38 @@
+{
+  "cold": {
+    "temperature_optimal": [
+      22,
+      24
+    ],
+    "temperature_acceptable": [
+      20,
+      25
+    ],
+    "humidity_optimal": [
+      40,
+      60
+    ],
+    "humidity_acceptable": [
+      40,
+      60
+    ]
+  },
+  "warm": {
+    "temperature_optimal": [
+      23,
+      25
+    ],
+    "temperature_acceptable": [
+      21,
+      28
+    ],
+    "humidity_optimal": [
+      40,
+      60
+    ],
+    "humidity_acceptable": [
+      40,
+      60
+    ]
+  }
+}

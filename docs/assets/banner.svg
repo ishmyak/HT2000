@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="280" viewBox="0 0 1100 280" role="img" aria-labelledby="title desc">
+<title id="title">HT2000 Monitor</title><desc id="desc">CO₂, температура и влажность. USB-датчик, системный трей и веб-дашборд. Декоративные графики не являются реальными измерениями.</desc>
+<rect width="1100" height="280" rx="20" fill="#101e2c"/>
+<text x="46" y="62" fill="#6ce2ba" font-family="monospace" font-size="16">USB HID → LINUX → WEB</text>
+<text x="44" y="128" fill="#f3f8fc" font-family="sans-serif" font-size="48" font-weight="700">HT2000 Monitor</text>
+<text x="46" y="172" fill="#c4d5e2" font-family="sans-serif" font-size="22">Микроклимат под наблюдением</text>
+<text x="46" y="232" fill="#8faabd" font-family="monospace" font-size="17">Python · PyQt5 · CSV · SSE</text>
+<rect x="706" y="38" width="350" height="204" rx="16" fill="#1c3041"/>
+<text x="734" y="78" fill="#c4d5e2" font-family="sans-serif" font-size="17">CO₂ / °C / % RH</text>
+<path d="M732 124L765 117 798 134 831 109 864 115 897 95 930 108 963 97 1028 112" fill="none" stroke="#6ce2ba" stroke-width="3"/>
+<path d="M732 163L781 156 830 163 879 146 928 153 977 144 1028 155" fill="none" stroke="#f2b869" stroke-width="3"/>
+<text x="734" y="213" fill="#8faabd" font-family="sans-serif" font-size="13">Иллюстрация · без реальных данных</text></svg>

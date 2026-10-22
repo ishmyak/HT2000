@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="HT2000 Monitor: монитор CO₂, температуры и влажности для Linux. Иконка в трее, минутные CSV и веб-дашборд для SLAB HT2000.">
+<meta name="color-scheme" content="dark light">
+<title>HT2000 Monitor — микроклимат под наблюдением</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#e9f1f6;background:#0e1923;line-height:1.65;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0}a{color:#78e1bf;text-underline-offset:4px}a:hover{color:#c4ffeb}a:focus-visible{outline:3px solid #f2bd71;outline-offset:5px}
+.wrap{max-width:1100px;margin:auto;padding:0 24px}header{display:flex;justify-content:space-between;gap:16px;padding:25px 0;border-bottom:1px solid #29404f}nav{display:flex;gap:24px;flex-wrap:wrap}header a{text-decoration:none}.brand{font-weight:750;color:#edf6ff}
+.hero{padding:70px 0 50px}.eyebrow{color:#78e1bf;text-transform:uppercase;letter-spacing:.13em;font-size:.8rem}h1{font-size:clamp(2.3rem,6vw,4.4rem);line-height:1.12;max-width:850px;margin:18px 0 25px;letter-spacing:-.04em}.lead{max-width:720px;color:#b2c6d6;font-size:1.2rem}.actions{display:flex;gap:14px;flex-wrap:wrap;margin:30px 0}.button{padding:11px 22px;border:1px solid #476271;border-radius:10px;text-decoration:none;font-weight:650}.primary{background:#78e1bf;color:#102820;border-color:#78e1bf}.primary:hover{background:#b2f3dd;color:#102820}.hero img{display:block;width:100%;height:auto;margin-top:45px;border-radius:18px}
+section{padding:35px 0}h2{font-size:1.8rem;line-height:1.2}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.card{border:1px solid #29404f;background:#142533;padding:24px;border-radius:16px}.card h3{margin:0 0 12px;font-size:1.1rem}.card p{color:#b2c6d6;margin:0}.split{display:grid;grid-template-columns:1fr 1fr;gap:32px}.note{border-left:3px solid #f2bd71;padding:12px 20px;background:#202b31;border-radius:0 10px 10px 0}code{font-family:ui-monospace,monospace}pre{overflow:auto;padding:22px;border:1px solid #29404f;background:#09121a;border-radius:12px;font-size:.9rem}.muted{color:#a0b8ca}footer{padding:35px 0;margin-top:35px;border-top:1px solid #29404f;color:#a0b8ca}.skip{position:absolute;top:-80px}.skip:focus{top:5px;background:#142533;padding:10px;z-index:2}
+@media(max-width:740px){.grid,.split{grid-template-columns:1fr}header{flex-direction:column}.hero{padding-top:40px}nav{gap:16px}.wrap{padding:0 18px}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Перейти к содержимому</a>
+<div class="wrap">
+<header><a class="brand" href="./">HT2000 Monitor</a><nav aria-label="Навигация"><a href="#features">Возможности</a><a href="#start">Установка</a><a href="https://github.com/ishmyak/HT2000">GitHub ↗</a></nav></header>
+<main id="main">
+<div class="hero"><p class="eyebrow">USB-датчик · Linux · Python</p><h1>Микроклимат<br>под наблюдением.</h1><p class="lead">CO₂, температура и влажность со SLAB HT2000 — в системном трее и браузере. Локальное приложение с историей измерений в CSV и графиками без облачного сервиса.</p><div class="actions"><a class="button primary" href="#start">Начать работу</a><a class="button" href="https://github.com/ishmyak/HT2000">Открыть исходники</a></div><img src="assets/banner.svg" alt="HT2000 Monitor: USB HID, Linux и веб-интерфейс. Декоративные графики, не реальные показания." width="1100" height="280"></div>
+<section id="features"><p class="eyebrow">От текущего значения к истории</p><h2>Три способа следить за показаниями</h2><div class="grid"><article class="card"><h3>Всегда в трее</h3><p>Крупное значение CO₂, цветовая индикация, уведомления и состояние связи. Температура и влажность — в подсказке.</p></article><article class="card"><h3>Графики в браузере</h3><p>Час, четыре часа, сутки или неделя. SVG-графики, тёмная тема и обновление через SSE без перезагрузки.</p></article><article class="card"><h3>История на диске</h3><p>Минутные медианы в ежедневных CSV-файлах. Пауза записи, настраиваемые зоны комфорта и диагностика пропусков.</p></article></div></section>
+<section id="start"><h2>Подключите HT2000 и запустите монитор</h2><div class="split"><div><p>Нужны Linux с hidraw, Python 3, PyQt5 и графическая сессия с системным треем. Основное окружение проекта — Astra Linux 1.8 / Fly.</p><p>Поддерживаемое устройство: <strong>SLAB HT2000</strong>, USB VID <code>10c4</code>, PID <code>82cd</code>. Backend для Windows и macOS не реализован.</p><p><a href="https://github.com/ishmyak/HT2000#быстрый-старт">Полная инструкция установки →</a></p><p class="muted">Сначала установите PyQt5 средствами дистрибутива и настройте udev-права на устройство по инструкции.</p></div><pre aria-label="Команды загрузки и запуска"><code>git clone https://github.com/ishmyak/HT2000.git
+cd HT2000
+python3 ht2000_monitor.py
+
+# Запуск в фоне
+bash start_ht2000.sh start
+
+# Остановка
+bash start_ht2000.sh stop</code></pre></div></section>
+<section><div class="note"><h2>Доступ по сети — под вашим контролем</h2><p>Включённый сервер слушает все сетевые интерфейсы на первом свободном порту 8080–8089. Аутентификации и TLS нет: используйте доверенную сеть и ограничивайте доступ межсетевым экраном. Не открывайте порт напрямую в Интернет.</p><a href="https://github.com/ishmyak/HT2000/blob/main/SECURITY.md">Безопасность и данные →</a></div></section>
+<section><h2>Открытый код. Понятное устройство.</h2><p>PyQt5 отвечает за трей; чтение USB, CSV и веб-сервер используют стандартную библиотеку Python. Данные сохраняются рядом с приложением. Диапазоны комфорта настраиваются пользователем и не являются медицинской оценкой.</p><div class="actions"><a class="button" href="https://github.com/ishmyak/HT2000/blob/main/docs/usage.md">Руководство</a><a class="button" href="https://github.com/ishmyak/HT2000/issues">Обратная связь</a><a class="button" href="https://github.com/ishmyak/HT2000/blob/main/CONTRIBUTING.md">Участие в разработке</a></div></section>
+</main><footer>HT2000 Monitor · <a href="https://github.com/ishmyak">Mikhail Yakimuk / ishmyak</a><br>Независимый проект для чтения датчика SLAB HT2000.</footer>
+</div>
+</body></html>
