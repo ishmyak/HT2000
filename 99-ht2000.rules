@@ -1,2 +1,2 @@
-# Доступ к CO2-монитору SLAB HT2000 (VID 0x10c4, PID 0x82cd) без root.
+# Доступ к CO2-монитору Silicon HT2000 (VID 0x10c4, PID 0x82cd) без root.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="82cd", MODE="0666"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""HT2000 Reader — чтение измерений с CO2-монитора SLAB HT2000.
+"""HT2000 Reader — чтение измерений с CO2-монитора Silicon HT2000.
 
 Устройство: USB HID, VID 0x10c4, PID 0x82cd (hidraw). Общение построено на
 HID feature reports (ioctl HIDIOCSFEATURE / HIDIOCGFEATURE), а не на обычных
